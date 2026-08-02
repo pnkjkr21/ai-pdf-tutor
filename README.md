@@ -74,23 +74,4 @@ npm run build
 | `OPENAI_API_KEY` | Recommended | Enables real plan/MCQ/summary + tutor chat |
 | `OPENAI_MODEL` | No | Default `gpt-4o-mini` |
 
-## Acceptance criteria checklist
 
-- [x] PDF upload + parse  
-- [x] Lesson plan / todo-style objectives  
-- [x] HITL interrupt before quiz  
-- [x] MCQs grounded in PDF (LLM) with demo fallback  
-- [x] MCQ genUI widget with radio + submit  
-- [x] Correct → green + explanation  
-- [x] Incorrect → red + hint + retry  
-- [x] Full objective loop  
-- [x] End summary + study tips  
-
-## Deliverables
-
-- GitHub: publish this repo publicly  
-- Loom (&lt; 5 min): walk through the flow above end-to-end  
-
-## License
-
-MIT
