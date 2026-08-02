@@ -1,36 +1,96 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI PDF Tutor
 
-## Getting Started
+Turn any PDF into an interactive lesson with:
 
-First, run the development server:
+1. **Plan** – LangGraph analyzes the PDF and drafts learning objectives + difficulty  
+2. **HITL approval** – you review/approve the plan before quizzing starts  
+3. **Quiz loop** – generative MCQ widget (radio + submit) per objective  
+4. **Feedback** – green explanation on correct, red hint + retry on incorrect  
+5. **Summary** – score, weak/strong areas, personalized study tips  
+6. **CopilotKit tutor chat** – ask for hints / learn more (never reveals answers)
+
+Built with **TypeScript**, **Next.js**, **LangGraph**, and **CopilotKit**.
+
+## Quick start
 
 ```bash
+cd ai-pdf-tutor
+cp .env.example .env.local
+# add OPENAI_API_KEY=sk-...
+
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Upload `public/samples/photosynthesis.pdf` (or any text-based PDF).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+> Without an API key the app still runs a **demo lesson** so you can walk the full HITL + MCQ UX.
 
-## Learn More
+## Demo flow (for Loom)
 
-To learn more about Next.js, take a look at the following resources:
+1. Upload the sample photosynthesis PDF  
+2. Wait for the drafted plan (objectives + difficulty)  
+3. Click **Approve plan & start quiz** (HITL interrupt)  
+4. Answer MCQs — try a wrong answer to see red hint + retry  
+5. Answer correctly to see green explanation, then continue  
+6. Open the **Tutor chat** sidebar and ask for a hint (it must not spoil the answer)  
+7. Finish all objectives and review the progress summary  
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```text
+Browser
+  ├─ Lesson UI (plan card, MCQ widget, summary)
+  ├─ CopilotKit sidebar (hints / learn more)
+  └─ API
+       ├─ POST /api/upload     → pdf-parse → session store
+       ├─ POST /api/lesson     → LangGraph start (plan → interrupt)
+       ├─ PUT  /api/lesson     → LangGraph resume (Command)
+       └─ POST /api/copilotkit → OpenAI tutor via CopilotKit runtime
+```
 
-## Deploy on Vercel
+### LangGraph nodes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+`draft_plan` → `await_plan_approval` (interrupt) → `prepare_questions` → `await_answer` (interrupt loop) → `next_objective` / `summarize` → `present_summary`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Checkpointer: in-memory `MemorySaver` (swap for Redis/Postgres for production).
+
+PDF text extraction uses `unpdf`.
+
+## Scripts
+
+```bash
+npm run sample:pdf   # regenerate public/samples/photosynthesis.pdf
+npm run dev
+npm run build
+```
+
+## Environment
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | Recommended | Enables real plan/MCQ/summary + tutor chat |
+| `OPENAI_MODEL` | No | Default `gpt-4o-mini` |
+
+## Acceptance criteria checklist
+
+- [x] PDF upload + parse  
+- [x] Lesson plan / todo-style objectives  
+- [x] HITL interrupt before quiz  
+- [x] MCQs grounded in PDF (LLM) with demo fallback  
+- [x] MCQ genUI widget with radio + submit  
+- [x] Correct → green + explanation  
+- [x] Incorrect → red + hint + retry  
+- [x] Full objective loop  
+- [x] End summary + study tips  
+
+## Deliverables
+
+- GitHub: publish this repo publicly  
+- Loom (&lt; 5 min): walk through the flow above end-to-end  
+
+## License
+
+MIT
