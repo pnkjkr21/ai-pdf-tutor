@@ -1,0 +1,159 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Overall lesson lifecycle for one uploaded PDF.
+enum LessonStatus {
+  UPLOADED
+  PARSED
+  PLAN_PENDING_APPROVAL
+  PLAN_APPROVED
+  QUIZ_READY
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum AttemptOutcome {
+  CORRECT
+  INCORRECT
+}
+
+/// One learning flow per PDF upload (v1).
+model Lesson {
+  id             String       @id @default(cuid())
+  title          String?
+  status         LessonStatus @default(UPLOADED)
+  difficulty     Difficulty?
+  sourceTextHash String?
+  errorMessage   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  pdfAsset   PdfAsset?
+  plan       LessonPlan?
+  objectives LearningObjective[]
+  questions  Question[]
+  progress   LessonProgress?
+  attempts   Attempt[]
+}
+
+/// Stored PDF metadata; bytes live on disk (or later S3/R2).
+model PdfAsset {
+  id           String   @id @default(cuid())
+  lessonId     String   @unique
+  originalName String
+  mimeType     String   @default("application/pdf")
+  byteSize     Int
+  /// Relative or absolute path returned by PdfStorage
+  storagePath  String
+  pageCount    Int?
+  extractedText String? @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+}
+
+/// AI-proposed / user-edited plan. MCQs must not exist until approved.
+model LessonPlan {
+  id          String     @id @default(cuid())
+  lessonId    String     @unique
+  title       String
+  difficulty  Difficulty
+  summary     String?    @db.Text
+  /// Raw structured plan JSON from LLM (validated via Zod before persist)
+  rawPlanJson Json?
+  approvedAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+}
+
+model LearningObjective {
+  id          String   @id @default(cuid())
+  lessonId    String
+  orderIndex  Int
+  statement   String
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lesson    Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@unique([lessonId, orderIndex])
+  @@index([lessonId])
+}
+
+/// Correct answer stays server-side; never send until graded correct.
+model Question {
+  id              String   @id @default(cuid())
+  lessonId        String
+  objectiveId     String
+  orderIndex      Int
+  prompt          String   @db.Text
+  /// Four choices as JSON string array, e.g. ["A","B","C","D"]
+  choicesJson     Json
+  /// 0-based index into choicesJson — never exposed to client until correct
+  correctIndex    Int
+  explanation     String   @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  lesson    Lesson            @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  objective LearningObjective @relation(fields: [objectiveId], references: [id], onDelete: Cascade)
+  attempts  Attempt[]
+
+  @@unique([lessonId, orderIndex])
+  @@index([objectiveId])
+}
+
+model Attempt {
+  id              String         @id @default(cuid())
+  lessonId        String
+  questionId      String
+  selectedIndex   Int
+  outcome         AttemptOutcome
+  isFirstAttempt  Boolean
+  hintRequested   Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+
+  lesson   Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonId])
+  @@index([questionId])
+}
+
+/// Durable quiz cursor + aggregate counters (deterministic app logic, not LLM).
+model LessonProgress {
+  id                    String    @id @default(cuid())
+  lessonId              String    @unique
+  currentObjectiveIndex Int       @default(0)
+  currentQuestionIndex  Int       @default(0)
+  questionsCompleted    Int       @default(0)
+  objectivesCompleted   Int       @default(0)
+  firstAttemptCorrect   Int       @default(0)
+  totalAttempts         Int       @default(0)
+  retryCount            Int       @default(0)
+  completedAt           DateTime?
+  /// Optional completion report payload (study tips, strong/weak areas)
+  reportJson            Json?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+}
