@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Native addon — must not be bundled by Turbopack/webpack
-  serverExternalPackages: ["better-sqlite3", "@langchain/langgraph-checkpoint-sqlite"],
+  /* PDF parsing and Node fs stay server-side only. */
+  serverExternalPackages: ["@prisma/client"],
 };
 
 export default nextConfig;

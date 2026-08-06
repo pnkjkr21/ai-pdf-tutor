@@ -28,17 +28,22 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files (never commit secrets)
 .env
 .env*.local
+
+# local PDF storage (MVP) — keep folder, ignore uploaded bytes
+/storage/pdfs/**
+!/storage/pdfs/.gitkeep
+/uploads/
+
+# vercel
+.vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
-# local sqlite database
-/data/
-*.sqlite
-*.sqlite-journal
-*.sqlite-wal
-*.sqlite-shm
+# prisma
+prisma/*.db
+prisma/*.db-journal

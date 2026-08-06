@@ -1,0 +1,6 @@
+/**
+ * Domain services — Step 1 stubs.
+ * Deterministic quiz grading, progress, and completion metrics live here (not LLM).
+ */
+
+export {};

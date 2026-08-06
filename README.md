@@ -1,94 +1,106 @@
 # AI PDF Tutor
 
-Turn any PDF into an interactive lesson with:
+Turn an uploaded PDF into an interactive, human-in-the-loop lesson with MCQs grounded only in the PDF.
 
-1. **Plan** – LangGraph analyzes the PDF and drafts learning objectives + difficulty  
-2. **HITL approval** – you review/approve the plan before quizzing starts  
-3. **Quiz loop** – generative MCQ widget (radio + submit) per objective  
-4. **Feedback** – green explanation on correct, red hint + retry on incorrect  
-5. **Summary** – score, weak/strong areas, personalized study tips  
-6. **CopilotKit tutor chat** – ask for hints / learn more (never reveals answers)
+This repo is built **incrementally**. Step 1 is project foundation only (no upload UI, LangGraph, CopilotKit, or quiz yet).
 
-Built with **TypeScript**, **Next.js**, **LangGraph**, and **CopilotKit**.
+## Stack
 
-## Quick start
+| Layer | Choice |
+| --- | --- |
+| App | Next.js App Router + TypeScript |
+| UI | React + Tailwind CSS |
+| Agents | LangChain.js + LangGraph.js (later steps) |
+| LLM | DeepSeek API (server-side only) |
+| Agent UI | CopilotKit (selective; later) |
+| DB | PostgreSQL + Prisma |
+| Validation | Zod |
+| PDF | Local filesystem storage (interface ready for S3/R2 later) |
+
+## Architecture (folders)
+
+```
+src/
+  app/                 # Next.js pages + route handlers + server actions
+  components/          # React UI
+  agents/
+    graph/             # LangGraph workflow
+    llm/               # DeepSeek integration
+    prompts/           # Prompt templates
+    schemas/           # Zod structured-output schemas
+  domain/              # Deterministic quiz/progress services
+  db/
+    prisma.ts          # Prisma client
+    repositories/      # DB access
+  lib/
+    pdf/               # PdfStorage interface + LocalPdfStorage
+    env.ts             # Server env helpers
+prisma/
+  schema.prisma        # Lesson, PdfAsset, plan, objectives, questions, attempts, progress
+storage/pdfs/          # Local PDF bytes (gitignored contents)
+```
+
+## Prerequisites
+
+- Node.js 20+
+- PostgreSQL 14+ running locally (or reachable via `DATABASE_URL`)
+
+## Setup
 
 ```bash
-cd ai-pdf-tutor
-cp .env.example .env.local
-# add DEEPSEEK_API_KEY=sk-...  (from https://platform.deepseek.com)
-
+# 1. Install dependencies
 npm install
+
+# 2. Configure environment
+cp .env.example .env.local
+# Edit .env.local:
+#   DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/ai_pdf_tutor?schema=public
+#   DEEPSEEK_API_KEY=sk-...
+#   PDF_STORAGE_PATH=./storage/pdfs
+
+# 3. Create the database (example)
+createdb ai_pdf_tutor
+
+# 4. Generate Prisma client + run migrations
+npm run db:generate
+npm run db:migrate
+# When prompted for a migration name on first run, use: init
+
+# 5. Start the app
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). Health check: [http://localhost:3000/api/health](http://localhost:3000/api/health).
 
-Upload `public/samples/photosynthesis.pdf` (or any text-based PDF).
+## Security notes (MVP)
 
-> Without an API key the app still runs a **demo lesson** so you can walk the full HITL + MCQ UX.
+- `DEEPSEEK_API_KEY` is **server-only**. Never use `NEXT_PUBLIC_*` for secrets.
+- Correct MCQ answers stay server-side until the user answers correctly (enforced in later quiz steps).
+- Treat uploads and model outputs as untrusted; validate LLM JSON with Zod before persist.
+- Local PDF storage rejects path traversal (`..`, absolute paths).
 
-## Demo flow (for Loom)
+## What is intentionally not in Step 1
 
-1. Upload the sample photosynthesis PDF  
-2. Wait for the drafted plan (objectives + difficulty)  
-3. Click **Approve plan & start quiz** (HITL interrupt)  
-4. Answer MCQs — try a wrong answer to see red hint + retry  
-5. Answer correctly to see green explanation, then continue  
-6. Open the **Tutor chat** sidebar and ask for a hint (it must not spoil the answer)  
-7. Finish all objectives and review the progress summary  
-
-## Architecture
-
-```text
-Browser
-  ├─ Lesson UI (plan card, MCQ widget, summary)
-  ├─ CopilotKit sidebar (hints / learn more)
-  └─ API
-       ├─ POST /api/upload     → pdf-parse → session store
-       ├─ POST /api/lesson     → LangGraph start (plan → interrupt)
-       ├─ PUT  /api/lesson     → LangGraph resume (Command)
-       └─ POST /api/copilotkit → DeepSeek tutor via CopilotKit runtime
-```
-
-### LangGraph nodes
-
-`draft_plan` → `await_plan_approval` (interrupt) → `prepare_questions` → `await_answer` (interrupt loop) → `next_objective` / `summarize` → `present_summary`
-
-Checkpointer: SQLite (`data/langgraph.sqlite`) so HITL state survives refresh/restart.
-
-PDF text extraction uses `unpdf`. Lesson rows sync into `data/ai-pdf-tutor.sqlite` via Drizzle.
-
-### Database (SQLite + Drizzle)
-
-Persistent lesson schema lives in `src/db/`:
-
-- `lessons`, `objectives`, `quizzes`, `student_progress`, `attempts`
-- Typed client: `import { db } from "@/db"`
-- Migrations in `/drizzle`
-
-```bash
-npm run db:generate   # after schema changes
-npm run db:migrate    # apply migrations
-npm run db:studio     # Drizzle Studio
-```
-
-Default file: `./data/ai-pdf-tutor.sqlite` (override with `DATABASE_URL`).
+- PDF upload / parse UI
+- LangGraph plan + HITL interrupt
+- MCQ generation
+- Quiz UI / hints / completion report
+- CopilotKit
 
 ## Scripts
 
-```bash
-npm run sample:pdf   # regenerate public/samples/photosynthesis.pdf
-npm run dev
-npm run build
-```
+| Script | Purpose |
+| --- | --- |
+| `npm run dev` | Next.js dev server (Turbopack) |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |
+| `npm run db:generate` | `prisma generate` |
+| `npm run db:migrate` | `prisma migrate dev` |
+| `npm run db:studio` | Prisma Studio |
 
-## Environment
+## Assumptions (v1)
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Recommended | Enables real plan/MCQ/summary + tutor chat |
-| `DEEPSEEK_MODEL` | No | Default `deepseek-v4-flash` |
-| `DATABASE_URL` | No | SQLite path (default `./data/ai-pdf-tutor.sqlite`) |
-
-
+- Single-user MVP; no auth
+- Text-extractable English PDFs
+- One lesson flow per upload
+- Sensible upload limits enforced in a later step

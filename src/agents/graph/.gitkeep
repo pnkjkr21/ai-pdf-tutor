@@ -1,0 +1,6 @@
+/**
+ * LangGraph workflow — Step 1 stub.
+ * Plan generation + interrupt at HITL approval will live here.
+ */
+
+export {};
