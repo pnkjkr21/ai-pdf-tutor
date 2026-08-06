@@ -43,7 +43,51 @@ storage/pdfs/          # Local PDF bytes (gitignored contents)
 ## Prerequisites
 
 - Node.js 20+
-- PostgreSQL 14+ running locally (or reachable via `DATABASE_URL`)
+- **PostgreSQL 14+ must be running** and reachable via `DATABASE_URL` before `prisma migrate` / `db:deploy` or any route that touches the DB. Step 1’s home page and `/api/health` do not need the DB; later steps will.
+
+### Start Postgres (pick one)
+
+**Docker** (matches `.env.example` credentials):
+
+```bash
+# Start Docker Desktop first, then:
+docker run -d --name ai-pdf-tutor-pg \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=ai_pdf_tutor \
+  -p 5432:5432 \
+  postgres:16-alpine
+
+# Wait until ready:
+docker exec ai-pdf-tutor-pg pg_isready -U postgres
+```
+
+**Homebrew** (macOS):
+
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+createdb ai_pdf_tutor
+# Set DATABASE_URL in .env / .env.local to your local user (often no password on localhost).
+```
+
+Confirm connectivity before migrating: `pg_isready` or `psql "$DATABASE_URL" -c 'select 1'`.
+
+## Environment files (easy footgun)
+
+| Tool | Reads |
+| --- | --- |
+| Next.js (`npm run dev`) | `.env.local` (and `.env`) |
+| Prisma CLI (`migrate`, `studio`, …) | **`.env` only** — not `.env.local` |
+
+Keep them in sync:
+
+```bash
+cp .env.example .env
+cp .env .env.local
+# Edit DATABASE_URL / DEEPSEEK_API_KEY / PDF_STORAGE_PATH in both, or symlink:
+# ln -sf .env .env.local
+```
 
 ## Setup
 
@@ -51,20 +95,23 @@ storage/pdfs/          # Local PDF bytes (gitignored contents)
 # 1. Install dependencies
 npm install
 
-# 2. Configure environment
-cp .env.example .env.local
-# Edit .env.local:
+# 2. Configure environment (see above — Prisma needs .env)
+cp .env.example .env
+cp .env .env.local
+# Edit:
 #   DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/ai_pdf_tutor?schema=public
 #   DEEPSEEK_API_KEY=sk-...
 #   PDF_STORAGE_PATH=./storage/pdfs
 
-# 3. Create the database (example)
-createdb ai_pdf_tutor
+# 3. Postgres must already be running (see Prerequisites). With Docker above, the DB
+#    ai_pdf_tutor is created automatically. Otherwise:
+# createdb ai_pdf_tutor
 
-# 4. Generate Prisma client + run migrations
+# 4. Generate Prisma client + apply the committed init migration
 npm run db:generate
-npm run db:migrate
-# When prompted for a migration name on first run, use: init
+npm run db:deploy
+# (npm run db:migrate runs prisma migrate dev — also applies committed migrations;
+#  prefer db:deploy for applying the checked-in init without creating a new one.)
 
 # 5. Start the app
 npm run dev
@@ -95,7 +142,8 @@ Open [http://localhost:3000](http://localhost:3000). Health check: [http://local
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
 | `npm run db:generate` | `prisma generate` |
-| `npm run db:migrate` | `prisma migrate dev` |
+| `npm run db:deploy` | `prisma migrate deploy` (apply committed migrations; preferred) |
+| `npm run db:migrate` | `prisma migrate dev` (dev workflow; applies existing migrations, can create new ones) |
 | `npm run db:studio` | Prisma Studio |
 
 ## Assumptions (v1)
