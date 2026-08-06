@@ -1,6 +1,0 @@
-/**
- * Database repositories — Step 1 stubs.
- * Concrete query methods land in later steps.
- */
-
-export {};

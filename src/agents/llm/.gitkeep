@@ -1,6 +1,0 @@
-/**
- * DeepSeek model integration — Step 1 stub.
- * Server-side only; never expose DEEPSEEK_API_KEY via NEXT_PUBLIC_*.
- */
-
-export {};

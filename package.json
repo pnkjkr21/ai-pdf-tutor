@@ -10,13 +10,17 @@
     "db:generate": "prisma generate",
     "db:deploy": "prisma migrate deploy",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@langchain/core": "^1.2.5",
+    "@langchain/openai": "^1.5.6",
     "@prisma/client": "^6.14.0",
     "next": "^15.4.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "unpdf": "^1.8.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -119,6 +119,57 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Health check: [http://localhost:3000/api/health](http://localhost:3000/api/health).
 
+## Step 2 — PDF upload & parse
+
+1. Ensure Postgres is up and `npm run db:deploy` has been applied.
+2. Set `MAX_PDF_BYTES` / `MAX_PDF_PAGES` in `.env` and `.env.local` (see `.env.example`).
+3. `npm run dev` → open the home page → choose a text-based PDF → **Upload & parse**.
+4. On success you should see `status: PARSED`, a lesson id, page count, and a short text preview.
+5. Bytes land under `storage/pdfs/<lessonId>/…`; `Lesson` + `PdfAsset` rows are in Postgres.
+
+API: `POST /api/upload` with multipart field `file`.
+
+- Invalid / oversized / non-PDF → `400` (no lesson created).
+- Unreadable or empty extractable text → `422` with `status: FAILED` and `errorMessage` (lesson + file kept for debugging).
+
+## Step 3 — Lesson plan + HITL approval
+
+1. Set a real `DEEPSEEK_API_KEY` in `.env` and `.env.local` (never `NEXT_PUBLIC_*`).
+2. Optional: `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `MAX_PLAN_SOURCE_CHARS` (default 60000).
+3. Upload/parse a PDF (Step 2) → open `/lessons/<lessonId>` (link shown after parse).
+4. **Generate lesson plan** → review title, difficulty, objectives.
+5. Edit / reorder / regenerate as needed → **Approve plan**.
+6. After approve: status `PLAN_APPROVED`, `approvedAt` set, **zero** `Question` rows. Quiz generation is Step 4.
+
+APIs (Postgres is source of truth; approve does not call MCQ generation):
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/lessons/:id` | Lesson + plan + objectives |
+| `POST` | `/api/lessons/:id/plan/generate` | From `PARSED` → pending plan |
+| `PATCH` | `/api/lessons/:id/plan` | Save edits while pending |
+| `POST` | `/api/lessons/:id/plan/regenerate` | Replace pending plan |
+| `POST` | `/api/lessons/:id/plan/approve` | → `PLAN_APPROVED` only |
+
+On DeepSeek/API failure during **generate**, lesson stays `PARSED` (recoverable). On **regenerate** failure, the existing pending plan is kept. Invalid LLM JSON is retried once; still-invalid output is not persisted.
+
+## Step 4 — MCQ generation (post-approval)
+
+1. Lesson must be `PLAN_APPROVED` with `approvedAt` set.
+2. On `/lessons/<id>`, click **Generate quiz**.
+3. DeepSeek writes 1–2 MCQs per objective (max 12 total) from truncated `PdfAsset.extractedText` only — **no embeddings / vector DB**.
+4. Result: `Question` rows + `LessonProgress` (zeros) + status `QUIZ_READY`.
+5. Client responses omit `correctIndex` and `explanation`. Interactive quiz UI is Step 5.
+
+API: `POST /api/lessons/:id/quiz/generate`
+
+| Rule | Behavior |
+| --- | --- |
+| Idempotency | One-shot. If questions already exist → `409 ALREADY_GENERATED` (checked before status; also blocks `QUIZ_READY` re-calls). Wrong status with no questions → `409 INVALID_STATUS`. |
+| Wrong status | `409` unless `PLAN_APPROVED` |
+| LLM failure | `502`; status stays `PLAN_APPROVED`; no partial questions (transaction) |
+| Truncation | `MAX_QUIZ_SOURCE_CHARS` (default 60000; falls back to `MAX_PLAN_SOURCE_CHARS`) |
+
 ## Security notes (MVP)
 
 - `DEEPSEEK_API_KEY` is **server-only**. Never use `NEXT_PUBLIC_*` for secrets.
@@ -126,13 +177,13 @@ Open [http://localhost:3000](http://localhost:3000). Health check: [http://local
 - Treat uploads and model outputs as untrusted; validate LLM JSON with Zod before persist.
 - Local PDF storage rejects path traversal (`..`, absolute paths).
 
-## What is intentionally not in Step 1
+## What is intentionally not in Step 4 yet
 
-- PDF upload / parse UI
-- LangGraph plan + HITL interrupt
-- MCQ generation
-- Quiz UI / hints / completion report
+- Full quiz UI (radios, Submit, green/red, hints, retry)
+- Answer grading / attempts / completion report
 - CopilotKit
+- Auth
+- Embeddings / vector databases
 
 ## Scripts
 
@@ -145,10 +196,11 @@ Open [http://localhost:3000](http://localhost:3000). Health check: [http://local
 | `npm run db:deploy` | `prisma migrate deploy` (apply committed migrations; preferred) |
 | `npm run db:migrate` | `prisma migrate dev` (dev workflow; applies existing migrations, can create new ones) |
 | `npm run db:studio` | Prisma Studio |
+| `npm run typecheck` | `tsc --noEmit` |
 
 ## Assumptions (v1)
 
 - Single-user MVP; no auth
 - Text-extractable English PDFs
 - One lesson flow per upload
-- Sensible upload limits enforced in a later step
+- Sensible upload limits enforced (`MAX_PDF_BYTES`, `MAX_PDF_PAGES`)
