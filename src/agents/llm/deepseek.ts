@@ -16,6 +16,22 @@ import {
   truncatePdfTextForQuiz,
 } from "@/agents/prompts/mcq";
 import {
+  buildHintSystemPrompt,
+  buildHintUserPrompt,
+  truncatePdfTextForHint,
+} from "@/agents/prompts/hint";
+import { hintLlmSchema, type HintLlmOutput } from "@/agents/schemas/hint";
+import {
+  learnMoreLlmSchema,
+  type LearnMoreLlmOutput,
+} from "@/agents/schemas/learn-more";
+import {
+  buildLearnMoreSystemPrompt,
+  buildLearnMoreUserPrompt,
+  truncatePdfTextForLearnMore,
+} from "@/agents/prompts/learn-more";
+import { assertDoesNotContainCorrectChoice } from "@/agents/llm/anti-spoiler";
+import {
   createDeepSeekChat,
   extractJsonObject,
   isNonRetryableLlmError,
@@ -115,4 +131,106 @@ export async function generateMcqsFromPdfText(
     const parsed = extractJsonObject(messageContentToString(response.content));
     return mcqLlmSchema.parse(parsed);
   });
+}
+
+export type HintGenerationContext = {
+  prompt: string;
+  choices: string[];
+  correctChoiceText: string;
+  extractedText: string;
+};
+
+/**
+ * Generate a Zod-validated hint that must not reveal the correct answer.
+ */
+export async function generateQuizHint(
+  context: HintGenerationContext,
+): Promise<HintLlmOutput> {
+  const { text, truncated, maxChars } = truncatePdfTextForHint(
+    context.extractedText,
+  );
+  if (!text) {
+    throw new Error("PDF extracted text is empty.");
+  }
+
+  const model = createDeepSeekChat(0.4);
+
+  const output = await withJsonRetry("DeepSeek quiz hint", async () => {
+    const response = await model.invoke([
+      new SystemMessage(buildHintSystemPrompt()),
+      new HumanMessage(
+        buildHintUserPrompt({
+          prompt: context.prompt,
+          choices: context.choices,
+          pdfText: text,
+          truncated,
+          maxChars,
+        }),
+      ),
+    ]);
+    const parsed = extractJsonObject(messageContentToString(response.content));
+    return hintLlmSchema.parse(parsed);
+  });
+
+  assertDoesNotContainCorrectChoice(
+    output.hint,
+    context.correctChoiceText,
+    "Hint",
+  );
+
+  return output;
+}
+
+export type LearnMoreGenerationContext = {
+  prompt: string;
+  choices: string[];
+  correctChoiceText: string;
+  objectiveStatement?: string | null;
+  extractedText: string;
+};
+
+/**
+ * Short PDF-grounded mini-lesson that must not reveal the MCQ answer.
+ */
+export async function generateQuizLearnMore(
+  context: LearnMoreGenerationContext,
+): Promise<LearnMoreLlmOutput> {
+  const { text, truncated, maxChars } = truncatePdfTextForLearnMore(
+    context.extractedText,
+  );
+  if (!text) {
+    throw new Error("PDF extracted text is empty.");
+  }
+
+  const model = createDeepSeekChat(0.35);
+
+  const output = await withJsonRetry("DeepSeek learn-more", async () => {
+    const response = await model.invoke([
+      new SystemMessage(buildLearnMoreSystemPrompt()),
+      new HumanMessage(
+        buildLearnMoreUserPrompt({
+          prompt: context.prompt,
+          choices: context.choices,
+          objectiveStatement: context.objectiveStatement,
+          pdfText: text,
+          truncated,
+          maxChars,
+        }),
+      ),
+    ]);
+    const parsed = extractJsonObject(messageContentToString(response.content));
+    return learnMoreLlmSchema.parse(parsed);
+  });
+
+  const combined = [
+    output.topicSummary,
+    ...(output.keyIdeas ?? []),
+  ].join("\n");
+  assertDoesNotContainCorrectChoice(
+    combined,
+    context.correctChoiceText,
+    "Learn more",
+  );
+
+  return output;
 }

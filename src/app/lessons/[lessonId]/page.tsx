@@ -25,8 +25,8 @@ export default async function LessonPage({ params }: PageProps) {
           Human-in-the-loop lesson plan
         </h1>
         <p className="text-stone-600">
-          Generate a plan from the uploaded PDF, approve it, then generate MCQs.
-          The interactive quiz UI comes in Step 5.
+          Generate a plan, approve it, generate MCQs, then play the quiz one
+          question at a time. Hints stay answer-safe; the full report is Step 7.
         </p>
       </header>
 

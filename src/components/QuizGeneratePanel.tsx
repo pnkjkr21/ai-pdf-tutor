@@ -59,7 +59,7 @@ export function QuizGeneratePanel({
             objectivesCovered: json.quiz?.objectivesCovered,
             objectiveCount: json.quiz?.objectiveCount,
             questions: json.quiz?.questions,
-            message: "Quiz already generated. Quiz UI comes in Step 5.",
+            message: "Quiz ready — play below.",
           });
         }
       });
@@ -70,6 +70,8 @@ export function QuizGeneratePanel({
   const ready =
     result?.status === "QUIZ_READY" ||
     status === "QUIZ_READY" ||
+    status === "IN_PROGRESS" ||
+    status === "COMPLETED" ||
     (result?.questionCount ?? 0) > 0;
 
   return (
@@ -151,7 +153,7 @@ export function QuizGeneratePanel({
             </ol>
           ) : null}
           <p className="mt-3 text-xs text-stone-500">
-            Quiz UI (radios, grading, hints) comes in Step 5.
+            Use the quiz player below to answer one question at a time.
           </p>
         </div>
       ) : null}

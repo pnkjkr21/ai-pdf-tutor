@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 
 import { QuizGeneratePanel } from "@/components/QuizGeneratePanel";
+import { QuizPlayer } from "@/components/QuizPlayer";
 
 type Difficulty = "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
 
@@ -110,7 +111,13 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
   const showQuizPanel =
     status === "PLAN_APPROVED" ||
     status === "QUIZ_READY" ||
+    status === "IN_PROGRESS" ||
+    status === "COMPLETED" ||
     (payload?.questionCount ?? 0) > 0;
+  const showQuizPlayer =
+    status === "QUIZ_READY" ||
+    status === "IN_PROGRESS" ||
+    status === "COMPLETED";
 
   return (
     <section className="flex w-full flex-col gap-4 rounded-md border border-stone-200 bg-white px-4 py-4">
@@ -402,6 +409,9 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
               questionCount={payload.questionCount ?? 0}
               onQuizGenerated={loadLesson}
             />
+          ) : null}
+          {showQuizPlayer ? (
+            <QuizPlayer lessonId={lessonId} onStatusChange={loadLesson} />
           ) : null}
         </div>
       ) : null}

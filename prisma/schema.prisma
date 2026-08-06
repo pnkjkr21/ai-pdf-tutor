@@ -129,6 +129,7 @@ model Attempt {
   outcome         AttemptOutcome
   isFirstAttempt  Boolean
   hintRequested   Boolean        @default(false)
+  learnMoreRequested Boolean     @default(false)
   createdAt       DateTime       @default(now())
 
   lesson   Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)

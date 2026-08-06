@@ -107,15 +107,16 @@ cp .env .env.local
 #    ai_pdf_tutor is created automatically. Otherwise:
 # createdb ai_pdf_tutor
 
-# 4. Generate Prisma client + apply the committed init migration
-npm run db:generate
+# 4. Apply migrations, then regenerate the Prisma client
 npm run db:deploy
-# (npm run db:migrate runs prisma migrate dev — also applies committed migrations;
-#  prefer db:deploy for applying the checked-in init without creating a new one.)
+npm run db:generate
+# Always re-run db:generate after schema/migration changes, then restart the dev server.
 
 # 5. Start the app
 npm run dev
 ```
+
+After pulling new migrations: `npm run db:deploy` → `npm run db:generate` → restart `npm run dev` (stale Prisma clients cause runtime errors).
 
 Open [http://localhost:3000](http://localhost:3000). Health check: [http://localhost:3000/api/health](http://localhost:3000/api/health).
 
@@ -170,6 +171,34 @@ API: `POST /api/lessons/:id/quiz/generate`
 | LLM failure | `502`; status stays `PLAN_APPROVED`; no partial questions (transaction) |
 | Truncation | `MAX_QUIZ_SOURCE_CHARS` (default 60000; falls back to `MAX_PLAN_SOURCE_CHARS`) |
 
+## Step 5 — Quiz play + deterministic grading
+
+1. Open a `QUIZ_READY` lesson on `/lessons/<id>`.
+2. Answer with radios + **Submit**. First submit → `IN_PROGRESS`.
+3. Incorrect → red highlight, DeepSeek hint, **Retry** (no answer leak).
+4. Correct → green highlight, explanation, **Next**.
+5. Finish all questions → `COMPLETED` with “report in Step 7” message.
+
+APIs:
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/lessons/:id/quiz/current` | Safe current question + progress |
+| `POST` | `/api/lessons/:id/quiz/answer` | Grade in app code; hint on miss |
+| `POST` | `/api/lessons/:id/quiz/next` | Advance after correct |
+| `POST` | `/api/lessons/:id/quiz/hint` | Another hint (same rules) |
+
+Grading is never done by the LLM. `correctIndex` is never returned; `explanation` only after a correct answer for that question.
+
+## Step 6 — Learn more (guide back to quiz)
+
+After an incorrect answer, **Learn more** requests a short PDF-grounded mini-lesson for the current question’s topic.
+
+- Does **not** reveal which choice is correct (prompt rules + verbatim correct-choice filter).
+- Does **not** advance the quiz; UI keeps the same question with Retry / **Back to question**.
+- API: `POST /api/lessons/:id/quiz/learn-more`
+- Optional persistence: `Attempt.learnMoreRequested` for later reporting.
+
 ## Security notes (MVP)
 
 - `DEEPSEEK_API_KEY` is **server-only**. Never use `NEXT_PUBLIC_*` for secrets.
@@ -177,13 +206,10 @@ API: `POST /api/lessons/:id/quiz/generate`
 - Treat uploads and model outputs as untrusted; validate LLM JSON with Zod before persist.
 - Local PDF storage rejects path traversal (`..`, absolute paths).
 
-## What is intentionally not in Step 4 yet
+## What is intentionally not in Step 6 yet
 
-- Full quiz UI (radios, Submit, green/red, hints, retry)
-- Answer grading / attempts / completion report
-- CopilotKit
-- Auth
-- Embeddings / vector databases
+- Full completion report with strong/weak areas and study tips (Step 7)
+- CopilotKit, auth, embeddings / vector DB
 
 ## Scripts
 
