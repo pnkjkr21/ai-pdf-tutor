@@ -1,3 +1,4 @@
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   CopilotRuntime,
   ExperimentalEmptyAdapter,
@@ -12,10 +13,14 @@ export const runtime = "nodejs";
  * An empty `new CopilotRuntime()` causes:
  *   useAgent: Agent 'default' not found ... No agents registered.
  */
+const deepseek = createOpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com",
+});
+
 const tutorAgent = new BuiltInAgent({
-  model: process.env.OPENAI_MODEL?.includes("/")
-    ? process.env.OPENAI_MODEL
-    : `openai/${process.env.OPENAI_MODEL || "gpt-4o-mini"}`,
+  // Cast: AI SDK model instance; CopilotKit typings lag behind LanguageModel versions
+  model: deepseek(process.env.DEEPSEEK_MODEL || "deepseek-v4-flash") as never,
   temperature: 0.4,
   maxSteps: 4,
   prompt: `You are a supportive PDF learning tutor.

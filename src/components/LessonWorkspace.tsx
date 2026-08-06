@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   useCopilotAdditionalInstructions,
   useCopilotReadable,
@@ -13,6 +13,8 @@ import { LessonPlanCard } from "@/components/LessonPlanCard";
 import { MCQWidget } from "@/components/MCQWidget";
 import { SummaryCard } from "@/components/SummaryCard";
 import type { LessonPlan, LessonSummary, PublicMCQ } from "@/lib/types";
+
+const STORAGE_KEY = "ai-pdf-tutor:active-lesson";
 
 type Phase = "upload" | "planning" | "plan" | "quiz" | "summary";
 
@@ -34,6 +36,13 @@ interface InterruptState {
   summary?: LessonSummary;
 }
 
+interface StoredLesson {
+  threadId: string;
+  sessionId: string;
+  fileName: string;
+  preview: string;
+}
+
 export function LessonWorkspace() {
   const [phase, setPhase] = useState<Phase>("upload");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -43,6 +52,7 @@ export function LessonWorkspace() {
   const [interrupt, setInterrupt] = useState<InterruptState | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [attempts, setAttempts] = useState<
     Array<{ questionId: string; correct: boolean; attempts: number }>
@@ -55,8 +65,12 @@ export function LessonWorkspace() {
         objective: interrupt.progress?.objectiveTitle,
         question: interrupt.question.question,
         choices: interrupt.question.choices,
-        // deliberately omit correct answer / explanation
-        lastFeedback: interrupt.correct === false ? "incorrect" : interrupt.correct === true ? "correct" : "pending",
+        lastFeedback:
+          interrupt.correct === false
+            ? "incorrect"
+            : interrupt.correct === true
+              ? "correct"
+              : "pending",
       },
       null,
       2
@@ -85,7 +99,6 @@ Rules:
 - If they ask for the answer, refuse politely and offer a conceptual hint instead.`,
   });
 
-  // CopilotKit HITL tool — agent can also surface plan approval in chat
   useHumanInTheLoop({
     name: "confirm_lesson_plan",
     description:
@@ -112,7 +125,8 @@ Rules:
       {
         name: "objectivesJson",
         type: "string",
-        description: "JSON array of objectives {id,title,description,difficulty}",
+        description:
+          "JSON array of objectives {id,title,description,difficulty}",
         required: true,
       },
     ],
@@ -144,27 +158,119 @@ Rules:
     },
   });
 
-  const applyResponse = useCallback((data: Record<string, unknown>) => {
-    setThreadId(String(data.threadId));
-    setStatusMessage(String(data.statusMessage || ""));
-    setAttempts((data.attempts as typeof attempts) || []);
-    const nextInterrupt = (data.interrupt as InterruptState) || null;
-    setInterrupt(nextInterrupt);
-
-    if (!nextInterrupt) {
-      if (data.summary) {
-        setPhase("summary");
-        setInterrupt({ type: "summary", summary: data.summary as LessonSummary });
-      }
-      return;
+  const persistActive = useCallback((data: StoredLesson) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      // ignore quota / private mode
     }
-
-    if (nextInterrupt.type === "plan_approval") setPhase("plan");
-    else if (nextInterrupt.type === "summary") setPhase("summary");
-    else setPhase("quiz");
   }, []);
 
-  async function startLesson(nextSessionId: string) {
+  const clearPersisted = useCallback(() => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const applyResponse = useCallback(
+    (data: Record<string, unknown>, extras?: Partial<StoredLesson>) => {
+      const nextThreadId = String(data.threadId);
+      setThreadId(nextThreadId);
+      setStatusMessage(String(data.statusMessage || ""));
+      setAttempts((data.attempts as typeof attempts) || []);
+      const nextInterrupt = (data.interrupt as InterruptState) || null;
+      setInterrupt(nextInterrupt);
+
+      const nextSessionId =
+        extras?.sessionId ||
+        (typeof data.lessonId === "string" ? data.lessonId : sessionId) ||
+        "";
+      const nextFileName =
+        extras?.fileName ||
+        (typeof data.fileName === "string" ? data.fileName : fileName) ||
+        "";
+      const nextPreview = extras?.preview ?? preview;
+
+      if (nextSessionId && nextThreadId) {
+        persistActive({
+          threadId: nextThreadId,
+          sessionId: nextSessionId,
+          fileName: nextFileName,
+          preview: nextPreview,
+        });
+      }
+
+      if (!nextInterrupt) {
+        if (data.summary) {
+          setPhase("summary");
+          setInterrupt({
+            type: "summary",
+            summary: data.summary as LessonSummary,
+          });
+        }
+        return;
+      }
+
+      if (nextInterrupt.type === "plan_approval") setPhase("plan");
+      else if (nextInterrupt.type === "summary") setPhase("summary");
+      else setPhase("quiz");
+    },
+    [fileName, persistActive, preview, sessionId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restore() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          if (!cancelled) setRestoring(false);
+          return;
+        }
+        const stored = JSON.parse(raw) as StoredLesson;
+        if (!stored?.threadId) {
+          if (!cancelled) setRestoring(false);
+          return;
+        }
+
+        setBusy(true);
+        setSessionId(stored.sessionId);
+        setFileName(stored.fileName);
+        setPreview(stored.preview || "");
+
+        const res = await fetch(
+          `/api/lesson?threadId=${encodeURIComponent(stored.threadId)}`
+        );
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          clearPersisted();
+          return;
+        }
+        applyResponse(data, stored);
+      } catch {
+        if (!cancelled) clearPersisted();
+      } finally {
+        if (!cancelled) {
+          setBusy(false);
+          setRestoring(false);
+        }
+      }
+    }
+
+    void restore();
+
+    return () => {
+      cancelled = true;
+    };
+    // Restore once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function startLesson(nextSessionId: string, meta: { fileName: string; preview: string }) {
     setBusy(true);
     setError(null);
     setPhase("planning");
@@ -176,10 +282,16 @@ Rules:
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to start lesson");
-      applyResponse(data);
+      applyResponse(data, {
+        sessionId: nextSessionId,
+        fileName: meta.fileName,
+        preview: meta.preview,
+        threadId: String(data.threadId),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start lesson");
       setPhase("upload");
+      clearPersisted();
     } finally {
       setBusy(false);
     }
@@ -206,6 +318,7 @@ Rules:
   }
 
   function reset() {
+    clearPersisted();
     setPhase("upload");
     setSessionId(null);
     setFileName("");
@@ -240,17 +353,20 @@ Rules:
           <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold">1. Setup</h2>
             <p className="mt-1 text-xs text-stone-500">
-              Upload a PDF. The agent drafts a plan, waits for your approval,
-              then quizzes you per objective.
+              Upload a PDF. Progress is saved to SQLite — refresh keeps your
+              place.
             </p>
             <div className="mt-3">
               <PdfUploader
-                disabled={busy || phase === "planning"}
+                disabled={busy || restoring || phase === "planning"}
                 onUploaded={(result) => {
                   setSessionId(result.sessionId);
                   setFileName(result.fileName);
                   setPreview(result.preview);
-                  void startLesson(result.sessionId);
+                  void startLesson(result.sessionId, {
+                    fileName: result.fileName,
+                    preview: result.preview,
+                  });
                 }}
               />
             </div>
@@ -259,9 +375,18 @@ Rules:
                 Loaded: <span className="font-medium">{fileName}</span>
               </p>
             )}
+            {(phase !== "upload" || threadId) && (
+              <button
+                type="button"
+                onClick={reset}
+                className="mt-3 text-xs font-medium text-stone-600 underline"
+              >
+                Start over
+              </button>
+            )}
             <a
               href="/samples/photosynthesis.pdf"
-              className="mt-3 inline-block text-xs font-medium text-teal-700 underline"
+              className="mt-3 ml-3 inline-block text-xs font-medium text-teal-700 underline"
               download
             >
               Download sample PDF
@@ -275,10 +400,17 @@ Rules:
               <Step
                 done={phase !== "upload" && phase !== "planning"}
                 label="Plan drafted"
-                active={phase === "planning"}
+                active={phase === "planning" || restoring}
               />
-              <Step done={["quiz", "summary"].includes(phase)} label="HITL approved" />
-              <Step done={phase === "summary"} label="Quiz loop" active={phase === "quiz"} />
+              <Step
+                done={["quiz", "summary"].includes(phase)}
+                label="HITL approved"
+              />
+              <Step
+                done={phase === "summary"}
+                label="Quiz loop"
+                active={phase === "quiz"}
+              />
               <Step done={phase === "summary"} label="Summary" />
             </ul>
             {attempts.length > 0 && (
@@ -306,10 +438,15 @@ Rules:
             </div>
           )}
 
-          {phase === "upload" && (
-            <EmptyState title="Upload a PDF to begin">
-              The agent will propose learning objectives and difficulty, then
-              pause for your approval before generating MCQs.
+          {(phase === "upload" || restoring) && !interrupt && (
+            <EmptyState
+              title={
+                restoring ? "Restoring your lesson…" : "Upload a PDF to begin"
+              }
+            >
+              {restoring
+                ? "Loading your saved progress from SQLite."
+                : "The agent will propose learning objectives and difficulty, then pause for your approval before generating MCQs."}
             </EmptyState>
           )}
 

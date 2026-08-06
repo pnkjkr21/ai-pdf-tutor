@@ -9,10 +9,12 @@ import type {
   QuizAttempt,
 } from "@/lib/types";
 
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+
 function requireApiKey() {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.DEEPSEEK_API_KEY) {
     throw new Error(
-      "OPENAI_API_KEY is missing. Add it to .env.local (see .env.example)."
+      "DEEPSEEK_API_KEY is missing. Add it to .env.local (see .env.example)."
     );
   }
 }
@@ -20,9 +22,59 @@ function requireApiKey() {
 function model(temperature = 0.3) {
   requireApiKey();
   return new ChatOpenAI({
-    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+    model: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
+    apiKey: process.env.DEEPSEEK_API_KEY,
     temperature,
+    configuration: {
+      baseURL: DEEPSEEK_BASE_URL,
+    },
+    // DeepSeek V4 enables thinking by default; disable for faster structured JSON
+    modelKwargs: {
+      thinking: { type: "disabled" },
+    },
   });
+}
+
+/**
+ * DeepSeek rejects OpenAI-style response_format (json_schema / sometimes json_object
+ * via LangChain helpers). Ask for JSON in the prompt and validate with Zod instead.
+ */
+function extractJsonObject(text: string): unknown {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1]?.trim() ?? trimmed;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Model response did not contain a JSON object");
+  }
+  return JSON.parse(candidate.slice(start, end + 1));
+}
+
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part) {
+          return String((part as { text: unknown }).text ?? "");
+        }
+        return "";
+      })
+      .join("");
+  }
+  return String(content ?? "");
+}
+
+async function invokeJson<T>(
+  schema: z.ZodType<T>,
+  messages: Array<{ role: string; content: string }>,
+  temperature = 0.3
+): Promise<T> {
+  const response = await model(temperature).invoke(messages);
+  const raw = messageText(response.content);
+  return schema.parse(extractJsonObject(raw));
 }
 
 const planSchema = z.object({
@@ -71,37 +123,43 @@ const summarySchema = z.object({
 });
 
 export async function generateLessonPlan(pdfText: string): Promise<LessonPlan> {
-  const llm = model(0.4).withStructuredOutput(planSchema);
-  const plan = await llm.invoke([
-    {
-      role: "system",
-      content: `You are an expert instructional designer.
+  const plan = await invokeJson(
+    planSchema,
+    [
+      {
+        role: "system",
+        content: `You are an expert instructional designer.
 Create a concise interactive lesson plan from the provided PDF content.
 Rules:
 - 3 to 5 learning objectives
 - Objectives must be grounded ONLY in the PDF
 - Keep titles short and actionable
 - Assign overall difficulty and per-objective difficulty
-- Use objective ids like obj-1, obj-2, ...`,
-    },
-    {
-      role: "user",
-      content: `PDF content:\n\n${pdfText.slice(0, 24000)}`,
-    },
-  ]);
+- Use objective ids like obj-1, obj-2, ...
+- Respond with a single valid JSON object only (no markdown), shaped as:
+  {"title":string,"summary":string,"difficulty":"beginner"|"intermediate"|"advanced","objectives":[{"id":string,"title":string,"description":string,"difficulty":"beginner"|"intermediate"|"advanced"}]}`,
+      },
+      {
+        role: "user",
+        content: `PDF content:\n\n${pdfText.slice(0, 24000)}`,
+      },
+    ],
+    0.4
+  );
 
-  return plan as LessonPlan;
+  return plan;
 }
 
 export async function generateMCQsForObjective(
   pdfText: string,
   objective: LearningObjective
 ): Promise<MCQQuestion[]> {
-  const llm = model(0.5).withStructuredOutput(mcqSchema);
-  const result = await llm.invoke([
-    {
-      role: "system",
-      content: `You create multiple-choice quiz questions for one learning objective.
+  const result = await invokeJson(
+    mcqSchema,
+    [
+      {
+        role: "system",
+        content: `You create multiple-choice quiz questions for one learning objective.
 Rules:
 - Generate 2 questions
 - Exactly 4 choices A–D
@@ -109,19 +167,23 @@ Rules:
 - Ground every question in the PDF excerpt
 - hint must nudge without revealing the answer
 - explanation is shown only after a correct answer
-- Use question ids like q-1, q-2`,
-    },
-    {
-      role: "user",
-      content: `Objective:
+- Use question ids like q-1, q-2
+- Respond with a single valid JSON object only (no markdown), shaped as:
+  {"questions":[{"id":string,"question":string,"choices":[{"id":"A"|"B"|"C"|"D","text":string}],"correctChoiceId":"A"|"B"|"C"|"D","explanation":string,"hint":string}]}`,
+      },
+      {
+        role: "user",
+        content: `Objective:
 Title: ${objective.title}
 Description: ${objective.description}
 Difficulty: ${objective.difficulty}
 
 PDF content:
 ${pdfText.slice(0, 20000)}`,
-    },
-  ]);
+      },
+    ],
+    0.5
+  );
 
   return result.questions.map((q) => ({
     ...q,
@@ -158,32 +220,37 @@ export async function generateLessonSummary(input: {
     else strongObjectives.push(obj.title);
   }
 
-  const llm = model(0.5).withStructuredOutput(summarySchema);
-  const generated = await llm.invoke([
-    {
-      role: "system",
-      content: `You are a supportive tutor writing a short progress report.
+  const generated = await invokeJson(
+    summarySchema,
+    [
+      {
+        role: "system",
+        content: `You are a supportive tutor writing a short progress report.
 Give personalized study tips. Be encouraging and specific.
-Do not invent content that was not in the lesson.`,
-    },
-    {
-      role: "user",
-      content: JSON.stringify(
-        {
-          lessonTitle: input.plan.title,
-          difficulty: input.plan.difficulty,
-          scorePercent,
-          correctFirstTry,
-          totalQuestions: total,
-          weakObjectives,
-          strongObjectives,
-          objectives: input.plan.objectives.map((o) => o.title),
-        },
-        null,
-        2
-      ),
-    },
-  ]);
+Do not invent content that was not in the lesson.
+Respond with a single valid JSON object only (no markdown):
+  {"studyTips":[string,string,string],"narrative":string}`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            lessonTitle: input.plan.title,
+            difficulty: input.plan.difficulty,
+            scorePercent,
+            correctFirstTry,
+            totalQuestions: total,
+            weakObjectives,
+            strongObjectives,
+            objectives: input.plan.objectives.map((o) => o.title),
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    0.5
+  );
 
   return {
     scorePercent,
@@ -196,13 +263,13 @@ Do not invent content that was not in the lesson.`,
   };
 }
 
-/** Fallback when OPENAI is unavailable — keeps demos runnable */
+/** Fallback when DeepSeek is unavailable — keeps demos runnable */
 export function demoLessonPlan(fileName: string): LessonPlan {
   const difficulty: Difficulty = "beginner";
   return {
     title: `Lesson from ${fileName}`,
     summary:
-      "A demo lesson plan (OPENAI_API_KEY missing or generation failed). Approve to continue with sample questions.",
+      "A demo lesson plan (DEEPSEEK_API_KEY missing or generation failed). Approve to continue with sample questions.",
     difficulty,
     objectives: [
       {

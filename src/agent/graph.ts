@@ -2,12 +2,14 @@ import {
   Annotation,
   Command,
   END,
-  MemorySaver,
   START,
   StateGraph,
   interrupt,
   isInterrupted,
 } from "@langchain/langgraph";
+import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import fs from "node:fs";
+import path from "node:path";
 import {
   demoLessonPlan,
   demoMCQs,
@@ -170,7 +172,6 @@ async function awaitAnswerNode(
   let isCorrect = false;
   let workingAttempts = [...state.attempts];
 
-  // Present question, then retry with hints until correct (no score penalty beyond attempts)
   while (!isCorrect) {
     const payload = interrupt({
       type: attemptCount === 0 ? "mcq" : "mcq_feedback",
@@ -197,7 +198,6 @@ async function awaitAnswerNode(
     ];
   }
 
-  // Correct — show explanation; resume continues the lesson
   interrupt({
     type: "mcq_feedback",
     correct: true,
@@ -284,9 +284,18 @@ async function presentSummaryNode(
   return { statusMessage: "Session finished." };
 }
 
-const checkpointer = new MemorySaver();
+function createCheckpointer() {
+  const dbPath = path.join(process.cwd(), "data", "langgraph.sqlite");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  return SqliteSaver.fromConnString(dbPath);
+}
 
-function buildGraph() {
+const globalForGraph = globalThis as unknown as {
+  __pdfTutorGraph?: ReturnType<typeof buildGraph>;
+  __pdfTutorCheckpointer?: SqliteSaver;
+};
+
+function buildGraph(checkpointer: SqliteSaver) {
   const graph = new StateGraph(LessonState)
     .addNode("draft_plan", planNode)
     .addNode("await_plan_approval", awaitPlanApprovalNode)
@@ -311,12 +320,12 @@ function buildGraph() {
   return graph.compile({ checkpointer });
 }
 
-const globalForGraph = globalThis as unknown as {
-  __pdfTutorGraph?: ReturnType<typeof buildGraph>;
-};
+const checkpointer =
+  globalForGraph.__pdfTutorCheckpointer ?? createCheckpointer();
+globalForGraph.__pdfTutorCheckpointer = checkpointer;
 
 export const lessonGraph =
-  globalForGraph.__pdfTutorGraph ?? buildGraph();
+  globalForGraph.__pdfTutorGraph ?? buildGraph(checkpointer);
 
 if (!globalForGraph.__pdfTutorGraph) {
   globalForGraph.__pdfTutorGraph = lessonGraph;
@@ -328,7 +337,6 @@ export function getInterruptValue(result: unknown): unknown | null {
       .__interrupt__;
     return interrupts?.[0]?.value ?? null;
   }
-  // invoke may return state with interrupts in different shapes
   if (
     result &&
     typeof result === "object" &&
@@ -338,6 +346,17 @@ export function getInterruptValue(result: unknown): unknown | null {
       result as { __interrupt__: Array<{ value: unknown }> }
     ).__interrupt__;
     return interrupts?.[0]?.value ?? null;
+  }
+  return null;
+}
+
+/** Read pending HITL payload from a persisted graph checkpoint. */
+export function getInterruptFromState(state: {
+  tasks?: Array<{ interrupts?: Array<{ value: unknown }> }>;
+}): unknown | null {
+  for (const task of state.tasks || []) {
+    const value = task.interrupts?.[0]?.value;
+    if (value !== undefined) return value;
   }
   return null;
 }

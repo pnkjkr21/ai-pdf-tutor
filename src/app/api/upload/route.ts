@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { extractPdfText } from "@/lib/pdf";
+import { createDraftLesson } from "@/lib/lesson-repository";
 import { saveSession } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -31,17 +32,22 @@ export async function POST(req: NextRequest) {
 
     const pdfText = await extractPdfText(buffer);
     const sessionId = uuidv4();
+    const fileName = file.name || "document.pdf";
 
+    // Durable store (survives refresh / server restart)
+    createDraftLesson({ id: sessionId, fileName, pdfText });
+
+    // In-memory cache for the current process
     saveSession({
       id: sessionId,
-      fileName: file.name || "document.pdf",
+      fileName,
       pdfText,
       createdAt: new Date().toISOString(),
     });
 
     return NextResponse.json({
       sessionId,
-      fileName: file.name,
+      fileName,
       charCount: pdfText.length,
       preview: pdfText.slice(0, 400),
     });

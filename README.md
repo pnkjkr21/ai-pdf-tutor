@@ -16,7 +16,7 @@ Built with **TypeScript**, **Next.js**, **LangGraph**, and **CopilotKit**.
 ```bash
 cd ai-pdf-tutor
 cp .env.example .env.local
-# add OPENAI_API_KEY=sk-...
+# add DEEPSEEK_API_KEY=sk-...  (from https://platform.deepseek.com)
 
 npm install
 npm run dev
@@ -48,16 +48,32 @@ Browser
        ├─ POST /api/upload     → pdf-parse → session store
        ├─ POST /api/lesson     → LangGraph start (plan → interrupt)
        ├─ PUT  /api/lesson     → LangGraph resume (Command)
-       └─ POST /api/copilotkit → OpenAI tutor via CopilotKit runtime
+       └─ POST /api/copilotkit → DeepSeek tutor via CopilotKit runtime
 ```
 
 ### LangGraph nodes
 
 `draft_plan` → `await_plan_approval` (interrupt) → `prepare_questions` → `await_answer` (interrupt loop) → `next_objective` / `summarize` → `present_summary`
 
-Checkpointer: in-memory `MemorySaver` (swap for Redis/Postgres for production).
+Checkpointer: SQLite (`data/langgraph.sqlite`) so HITL state survives refresh/restart.
 
-PDF text extraction uses `unpdf`.
+PDF text extraction uses `unpdf`. Lesson rows sync into `data/ai-pdf-tutor.sqlite` via Drizzle.
+
+### Database (SQLite + Drizzle)
+
+Persistent lesson schema lives in `src/db/`:
+
+- `lessons`, `objectives`, `quizzes`, `student_progress`, `attempts`
+- Typed client: `import { db } from "@/db"`
+- Migrations in `/drizzle`
+
+```bash
+npm run db:generate   # after schema changes
+npm run db:migrate    # apply migrations
+npm run db:studio     # Drizzle Studio
+```
+
+Default file: `./data/ai-pdf-tutor.sqlite` (override with `DATABASE_URL`).
 
 ## Scripts
 
@@ -71,7 +87,8 @@ npm run build
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | Recommended | Enables real plan/MCQ/summary + tutor chat |
-| `OPENAI_MODEL` | No | Default `gpt-4o-mini` |
+| `DEEPSEEK_API_KEY` | Recommended | Enables real plan/MCQ/summary + tutor chat |
+| `DEEPSEEK_MODEL` | No | Default `deepseek-v4-flash` |
+| `DATABASE_URL` | No | SQLite path (default `./data/ai-pdf-tutor.sqlite`) |
 
 
