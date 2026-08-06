@@ -30,6 +30,15 @@ import {
   buildLearnMoreUserPrompt,
   truncatePdfTextForLearnMore,
 } from "@/agents/prompts/learn-more";
+import {
+  buildStudyTipsSystemPrompt,
+  buildStudyTipsUserPrompt,
+  truncatePdfTextForStudyTips,
+} from "@/agents/prompts/study-tips";
+import {
+  studyTipsLlmSchema,
+  type StudyTipsLlmOutput,
+} from "@/agents/schemas/study-tips";
 import { assertDoesNotContainCorrectChoice } from "@/agents/llm/anti-spoiler";
 import {
   createDeepSeekChat,
@@ -233,4 +242,47 @@ export async function generateQuizLearnMore(
   );
 
   return output;
+}
+
+export type StudyTipsGenerationContext = {
+  title: string;
+  strongAreas: Array<{ orderIndex: number; statement: string }>;
+  weakAreas: Array<{ orderIndex: number; statement: string }>;
+  metricsSummary: string;
+  extractedText: string;
+};
+
+/**
+ * Personalized study tips from PDF text + strong/weak objectives (no vector DB).
+ */
+export async function generateStudyTipsFromPdfText(
+  context: StudyTipsGenerationContext,
+): Promise<StudyTipsLlmOutput> {
+  const { text, truncated, maxChars } = truncatePdfTextForStudyTips(
+    context.extractedText,
+  );
+  if (!text) {
+    throw new Error("PDF extracted text is empty.");
+  }
+
+  const model = createDeepSeekChat(0.4);
+
+  return withJsonRetry("DeepSeek study tips", async () => {
+    const response = await model.invoke([
+      new SystemMessage(buildStudyTipsSystemPrompt()),
+      new HumanMessage(
+        buildStudyTipsUserPrompt({
+          title: context.title,
+          strongAreas: context.strongAreas,
+          weakAreas: context.weakAreas,
+          metricsSummary: context.metricsSummary,
+          pdfText: text,
+          truncated,
+          maxChars,
+        }),
+      ),
+    ]);
+    const parsed = extractJsonObject(messageContentToString(response.content));
+    return studyTipsLlmSchema.parse(parsed);
+  });
 }

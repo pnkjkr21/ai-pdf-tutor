@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 
+import { CompletionReport } from "@/components/CompletionReport";
+
 type SafeQuestion = {
   id: string;
   orderIndex: number;
@@ -124,18 +126,22 @@ export function QuizPlayer({
       ) : null}
 
       {state.phase === "finished" ? (
-        <div className="rounded-md border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-950">
-          <p className="font-medium">Lesson questions complete</p>
-          <p className="mt-1">
-            {state.message ??
-              "Nice work. A personalized performance report comes in Step 7."}
-          </p>
-          {state.progress ? (
-            <p className="mt-2 text-xs text-teal-900/80">
-              First-attempt correct: {state.progress.firstAttemptCorrect} · Attempts:{" "}
-              {state.progress.totalAttempts} · Retries: {state.progress.retryCount}
+        <div className="flex flex-col gap-4">
+          <div className="rounded-md border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-950">
+            <p className="font-medium">Lesson questions complete</p>
+            <p className="mt-1">
+              {state.message ??
+                "Nice work. Your personalized performance report is below."}
             </p>
-          ) : null}
+            {state.progress ? (
+              <p className="mt-2 text-xs text-teal-900/80">
+                First-attempt correct: {state.progress.firstAttemptCorrect} ·
+                Attempts: {state.progress.totalAttempts} · Retries:{" "}
+                {state.progress.retryCount}
+              </p>
+            ) : null}
+          </div>
+          <CompletionReport lessonId={lessonId} />
         </div>
       ) : null}
 

@@ -26,7 +26,8 @@ export default async function LessonPage({ params }: PageProps) {
         </h1>
         <p className="text-stone-600">
           Generate a plan, approve it, generate MCQs, then play the quiz one
-          question at a time. Hints stay answer-safe; the full report is Step 7.
+          question at a time. When you finish, a performance report with study
+          tips appears on this page.
         </p>
       </header>
 

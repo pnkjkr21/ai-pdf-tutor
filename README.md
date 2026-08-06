@@ -177,7 +177,7 @@ API: `POST /api/lessons/:id/quiz/generate`
 2. Answer with radios + **Submit**. First submit → `IN_PROGRESS`.
 3. Incorrect → red highlight, DeepSeek hint, **Retry** (no answer leak).
 4. Correct → green highlight, explanation, **Next**.
-5. Finish all questions → `COMPLETED` with “report in Step 7” message.
+5. Finish all questions → `COMPLETED`; the completion report (Step 7) loads on the lesson page.
 
 APIs:
 
@@ -199,16 +199,40 @@ After an incorrect answer, **Learn more** requests a short PDF-grounded mini-les
 - API: `POST /api/lessons/:id/quiz/learn-more`
 - Optional persistence: `Attempt.learnMoreRequested` for later reporting.
 
+## Step 7 — Completion report
+
+When the quiz finishes (`COMPLETED` / all questions answered correctly):
+
+1. **Metrics in app code** (not the LLM): objectives/questions completed, first-attempt accuracy, retries, strong areas (high first-try success), weak areas (misses/retries).
+2. **Study tips via DeepSeek**, grounded in truncated PDF text + strong/weak objectives; Zod-validated before persist.
+3. Payload stored in `LessonProgress.reportJson`.
+4. UI: `CompletionReport` on `/lessons/<id>` when the quiz phase is finished (metrics + tips; optional regenerate).
+
+APIs:
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/lessons/:id/report` | Return persisted report, or generate once if missing (idempotent) |
+| `POST` | `/api/lessons/:id/report` | Recompute metrics + regenerate tips (`COMPLETED` only) |
+
+| Rule | Behavior |
+| --- | --- |
+| Wrong status | `409 NOT_COMPLETED` unless `COMPLETED` |
+| Idempotency | `GET` reuses `reportJson` when present; does not reset quiz state |
+| Answer secrecy | Report responses never include `correctIndex` / answer keys |
+| LLM failure | `502`; lesson stays `COMPLETED`; existing report (if any) unchanged |
+
+No embeddings / vector DB — PDF text truncation only (same pattern as plan/MCQ/hints).
+
 ## Security notes (MVP)
 
 - `DEEPSEEK_API_KEY` is **server-only**. Never use `NEXT_PUBLIC_*` for secrets.
-- Correct MCQ answers stay server-side until the user answers correctly (enforced in later quiz steps).
+- Correct MCQ answers stay server-side until the user answers correctly.
 - Treat uploads and model outputs as untrusted; validate LLM JSON with Zod before persist.
 - Local PDF storage rejects path traversal (`..`, absolute paths).
 
-## What is intentionally not in Step 6 yet
+## Intentionally out of scope (MVP)
 
-- Full completion report with strong/weak areas and study tips (Step 7)
 - CopilotKit, auth, embeddings / vector DB
 
 ## Scripts

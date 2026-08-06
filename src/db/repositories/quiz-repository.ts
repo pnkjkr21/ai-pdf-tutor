@@ -145,4 +145,15 @@ export const quizRepository = {
     }
     return lesson;
   },
+
+  /** Persist completion report only — does not change lesson status or attempts. */
+  async saveCompletionReport(params: {
+    lessonId: string;
+    reportJson: object;
+  }): Promise<void> {
+    await prisma.lessonProgress.update({
+      where: { lessonId: params.lessonId },
+      data: { reportJson: params.reportJson },
+    });
+  },
 };
