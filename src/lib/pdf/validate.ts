@@ -80,7 +80,7 @@ export function assertLooksLikePdf(params: {
   if (bytes.byteLength > maxBytes) {
     throw new PdfUploadValidationError(
       "TOO_LARGE",
-      `PDF exceeds the maximum size of ${maxBytes} bytes.`,
+      `PDF exceeds the maximum size of ${maxBytes/(1024*1024)} MB.`,
     );
   }
 }

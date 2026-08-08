@@ -95,13 +95,13 @@ export function PdfUploader() {
               setFile(event.target.files?.[0] ?? null);
               setState({ kind: "idle" });
             }}
-            className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-md file:border-0 file:bg-teal-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-teal-700"
+            className="disabled:cursor-not-allowed file:cursor-pointer block w-full text-sm text-stone-600 file:mr-4 file:rounded-md file:border-0 file:bg-teal-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-teal-700"
           />
         </label>
         <button
           type="submit"
           disabled={isPending || !file}
-          className="w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 hover:bg-teal-700"
+          className="w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 hover:bg-teal-700 hover:cursor-pointer"
         >
           {isPending ? "Uploading…" : "Upload & parse"}
         </button>

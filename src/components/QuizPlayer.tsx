@@ -243,7 +243,7 @@ export function QuizPlayer({
                 await onStatusChange?.();
               })
             }
-            className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
+            className="disabled:cursor-not-allowed rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700 hover:cursor-pointer"
           >
             {isPending ? "Submitting…" : "Submit"}
           </button>
