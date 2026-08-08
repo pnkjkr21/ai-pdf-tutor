@@ -164,7 +164,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
               setInfo("Plan proposed — review and approve when ready.");
             })
           }
-          className="w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
+          className="hover:cursor-pointer disabled:cursor-not-allowed w-fit rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
         >
           {isPending ? "Generating…" : "Generate lesson plan"}
         </button>
@@ -323,7 +323,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
             <button
               type="submit"
               disabled={isPending}
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
+              className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
             >
               Save edits
             </button>
@@ -344,7 +344,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                   setInfo("New plan generated from the PDF. Still pending approval.");
                 })
               }
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
+              className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
             >
               Regenerate
             </button>
@@ -368,7 +368,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                   );
                 })
               }
-              className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
+              className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
             >
               Approve plan
             </button>
