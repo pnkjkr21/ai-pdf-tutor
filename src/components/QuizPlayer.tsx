@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 
 import { CompletionReport } from "@/components/CompletionReport";
+import { QuizReview, type ReviewedQuestion } from "@/components/QuizReview";
 
 type SafeQuestion = {
   id: string;
@@ -61,6 +62,9 @@ export function QuizPlayer({
   const [state, setState] = useState<QuizState>(emptyState);
   const [draftIndex, setDraftIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<ReviewedQuestion[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [reviewIndex, setReviewIndex] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
 
   async function loadCurrent() {
@@ -84,8 +88,29 @@ export function QuizPlayer({
     setDraftIndex(json.phase === "unanswered" ? null : json.selectedIndex);
   }
 
+  /** Answered-question trail. A failure here must not break quiz play. */
+  async function loadHistory() {
+    try {
+      const res = await fetch(`/api/lessons/${lessonId}/quiz/history`);
+      if (!res.ok) {
+        return;
+      }
+      const json = (await res.json()) as {
+        questions?: ReviewedQuestion[];
+        questionTotal?: number;
+      };
+      setHistory(json.questions ?? []);
+      setHistoryTotal(json.questionTotal ?? 0);
+    } catch {
+      // Review is additive; keep whatever trail we already have.
+    }
+  }
+
   useEffect(() => {
+    setHistory([]);
+    setReviewIndex(null);
     void loadCurrent();
+    void loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId]);
 
@@ -102,7 +127,8 @@ export function QuizPlayer({
 
   const question = state.question;
   const locked = state.phase === "correct" || state.phase === "finished";
-  const showRadios = state.phase !== "finished" && question;
+  const isReviewing = reviewIndex !== null && history.length > 0;
+  const showRadios = !isReviewing && state.phase !== "finished" && question;
 
   return (
     <section className="flex w-full flex-col gap-4 rounded-md border border-stone-200 bg-white px-4 py-4">
@@ -119,13 +145,43 @@ export function QuizPlayer({
         ) : null}
       </header>
 
+      {history.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-3 py-2">
+          <span className="text-sm text-stone-600">
+            {history.length} question{history.length === 1 ? "" : "s"} answered
+            so far
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              setReviewIndex((current) =>
+                current === null ? history.length - 1 : null,
+              )
+            }
+            className="rounded-md border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-800 hover:bg-stone-100"
+          >
+            {isReviewing ? "Close review" : "Review previous questions"}
+          </button>
+        </div>
+      ) : null}
+
       {error ? (
         <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
         </p>
       ) : null}
 
-      {state.phase === "finished" ? (
+      {isReviewing ? (
+        <QuizReview
+          items={history}
+          index={Math.min(reviewIndex, history.length - 1)}
+          questionTotal={historyTotal || history.length}
+          onIndexChange={setReviewIndex}
+          onClose={() => setReviewIndex(null)}
+        />
+      ) : null}
+
+      {!isReviewing && state.phase === "finished" ? (
         <div className="flex flex-col gap-4">
           <div className="rounded-md border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-950">
             <p className="font-medium">Lesson questions complete</p>
@@ -188,21 +244,21 @@ export function QuizPlayer({
         </fieldset>
       ) : null}
 
-      {state.phase === "incorrect" && state.hint ? (
+      {!isReviewing && state.phase === "incorrect" && state.hint ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           <span className="font-medium">Hint: </span>
           {state.hint}
         </p>
       ) : null}
 
-      {state.phase === "correct" && state.explanation ? (
+      {!isReviewing && state.phase === "correct" && state.explanation ? (
         <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
           <span className="font-medium">Explanation: </span>
           {state.explanation}
         </p>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <div className={`flex-wrap gap-2 ${isReviewing ? "hidden" : "flex"}`}>
         {state.phase === "unanswered" || state.phase === "incorrect" ? (
           <button
             type="button"
@@ -240,6 +296,7 @@ export function QuizPlayer({
                   progress: json.progress,
                 });
                 setDraftIndex(json.selectedIndex);
+                await loadHistory();
                 await onStatusChange?.();
               })
             }
@@ -356,6 +413,7 @@ export function QuizPlayer({
                 setDraftIndex(
                   json.phase === "unanswered" ? null : json.selectedIndex,
                 );
+                await loadHistory();
                 await onStatusChange?.();
               })
             }
@@ -366,7 +424,7 @@ export function QuizPlayer({
         ) : null}
       </div>
 
-      {state.learnMore ? (
+      {!isReviewing && state.learnMore ? (
         <aside className="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-950">
           <p className="font-medium">Learn more</p>
           <p className="mt-2 whitespace-pre-wrap">{state.learnMore.topicSummary}</p>

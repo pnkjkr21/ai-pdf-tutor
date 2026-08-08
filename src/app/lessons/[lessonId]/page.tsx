@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AppShell } from "@/components/AppShell";
 import { LessonPlanPanel } from "@/components/LessonPlanPanel";
 
 type PageProps = {
@@ -10,7 +11,7 @@ export default async function LessonPage({ params }: PageProps) {
   const { lessonId } = await params;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-6 py-16">
+    <AppShell activeLessonId={lessonId}>
       <header className="flex flex-col gap-3">
         <Link
           href="/"
@@ -32,6 +33,6 @@ export default async function LessonPage({ params }: PageProps) {
       </header>
 
       <LessonPlanPanel lessonId={lessonId} />
-    </main>
+    </AppShell>
   );
 }

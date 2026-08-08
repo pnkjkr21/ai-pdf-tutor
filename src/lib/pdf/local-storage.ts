@@ -1,4 +1,4 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { PdfStorage, StoredPdf } from "./storage";
@@ -56,19 +56,21 @@ export class LocalPdfStorage implements PdfStorage {
     return readFile(absolutePath);
   }
 
-  async delete(storagePath: string): Promise<void> {
-    try {
-      const absolutePath = this.resolveSafe(storagePath);
-      await unlink(absolutePath);
-    } catch (error) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error
-          ? (error as { code?: string }).code
-          : undefined;
-      if (code !== "ENOENT") {
-        throw error;
-      }
+  async deleteLessonFiles(lessonId: string): Promise<void> {
+    // This is a recursive delete, so validate harder than resolveSafe alone:
+    // "a/b" is relative, has no "..", and resolves inside the root, yet would
+    // wipe a nested tree. cuids are [a-z0-9]+, so this costs nothing.
+    if (!/^[A-Za-z0-9_-]+$/.test(lessonId)) {
+      throw new Error("Invalid lessonId");
     }
+
+    const directory = this.resolveSafe(lessonId);
+    if (path.resolve(directory) === path.resolve(this.root)) {
+      throw new Error("Refusing to delete storage root");
+    }
+
+    // force: true makes a missing directory a no-op (idempotent).
+    await rm(directory, { recursive: true, force: true });
   }
 
   /** Prevent path traversal outside the storage root. */

@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 
+import type { LessonStatus } from "@prisma/client";
+
 import { lessonRepository } from "@/db/repositories/lesson-repository";
+import { toLibraryItem, type LessonLibraryItem } from "@/domain/lesson-library";
 import type { PdfStorage } from "@/lib/pdf";
 import { localPdfStorage } from "@/lib/pdf";
 import { parsePdfBuffer } from "@/lib/pdf/parse";
 import {
   buildTextPreview,
+  lessonStatusSchema,
   type UploadSuccessPayload,
 } from "@/lib/pdf/upload-schemas";
 import {
@@ -15,18 +19,36 @@ import {
   PdfUploadValidationError,
 } from "@/lib/pdf/validate";
 
+/**
+ * A prior lesson only blocks a re-upload if it produced something usable.
+ * UPLOADED = crashed mid-flight, or the in-flight sibling of a double-submit
+ *            (the row is UPLOADED for the whole parse window).
+ * FAILED   = the old attempt is the very problem the re-upload is meant to fix.
+ */
+const NON_BLOCKING_STATUSES = ["UPLOADED", "FAILED"] as const;
+
+/** Defined by exclusion so a future lifecycle status blocks by default. */
+export const DUPLICATE_BLOCKING_STATUSES: readonly LessonStatus[] =
+  lessonStatusSchema.options.filter(
+    (status) =>
+      !(NON_BLOCKING_STATUSES as readonly string[]).includes(status),
+  );
+
 export type UploadPdfInput = {
   originalName: string;
   mimeType: string;
   bytes: Buffer;
+  /** User explicitly chose "upload a fresh copy anyway" after a 409. */
+  allowDuplicate?: boolean;
 };
 
 export type UploadPdfResult =
   | { kind: "validated_failed"; error: PdfUploadValidationError }
+  | { kind: "duplicate"; duplicate: LessonLibraryItem }
   | { kind: "completed"; payload: UploadSuccessPayload };
 
 /**
- * Domain orchestration: validate → create lesson → store → parse → persist.
+ * Domain orchestration: validate → dedupe → create lesson → store → parse → persist.
  * Deterministic app logic only (no LLM).
  */
 export async function uploadAndParsePdf(
@@ -40,6 +62,21 @@ export async function uploadAndParsePdf(
       return { kind: "validated_failed", error };
     }
     throw error;
+  }
+
+  // Hashed here — after validation (so a bad PDF still gets its specific 400,
+  // and we don't digest a blob about to be rejected for size) and before
+  // createUploaded, the only point where nothing has been written yet.
+  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
+
+  if (!input.allowDuplicate) {
+    const existing = await lessonRepository.findDuplicateByPdfHash(
+      sha256,
+      DUPLICATE_BLOCKING_STATUSES,
+    );
+    if (existing) {
+      return { kind: "duplicate", duplicate: toLibraryItem(existing) };
+    }
   }
 
   const lesson = await lessonRepository.createUploaded();
@@ -57,6 +94,8 @@ export async function uploadAndParsePdf(
       mimeType: "application/pdf",
       byteSize: stored.byteSize,
       storagePath: stored.storagePath,
+      // Recorded even on the override path, so a third upload sees both copies.
+      sha256,
     });
 
     let pageCount: number | null = null;
