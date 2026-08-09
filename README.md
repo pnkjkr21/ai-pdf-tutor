@@ -68,25 +68,18 @@ docker exec ai-pdf-tutor-pg pg_isready -U postgres
 brew install postgresql@16
 brew services start postgresql@16
 createdb ai_pdf_tutor
-# Set DATABASE_URL in .env / .env.local to your local user (often no password on localhost).
+# Set DATABASE_URL in .env to your local user (often no password on localhost).
 ```
 
 Confirm connectivity before migrating: `pg_isready` or `psql "$DATABASE_URL" -c 'select 1'`.
 
-## Environment files (easy footgun)
+## Environment
 
-| Tool | Reads |
-| --- | --- |
-| Next.js (`npm run dev`) | `.env.local` (and `.env`) |
-| Prisma CLI (`migrate`, `studio`, …) | **`.env` only** — not `.env.local` |
-
-Keep them in sync:
+Put secrets in a single **`.env`** file (gitignored). Next.js and Prisma both load it:
 
 ```bash
 cp .env.example .env
-cp .env .env.local
-# Edit DATABASE_URL / DEEPSEEK_API_KEY / PDF_STORAGE_PATH in both, or symlink:
-# ln -sf .env .env.local
+# Edit DATABASE_URL / DEEPSEEK_API_KEY / PDF_STORAGE_PATH
 ```
 
 ## Setup
@@ -95,9 +88,8 @@ cp .env .env.local
 # 1. Install dependencies
 npm install
 
-# 2. Configure environment (see above — Prisma needs .env)
+# 2. Configure environment
 cp .env.example .env
-cp .env .env.local
 # Edit:
 #   DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/ai_pdf_tutor?schema=public
 #   DEEPSEEK_API_KEY=sk-...
@@ -123,7 +115,7 @@ Open [http://localhost:3000](http://localhost:3000). Health check: [http://local
 ## Step 2 — PDF upload & parse
 
 1. Ensure Postgres is up and `npm run db:deploy` has been applied.
-2. Set `MAX_PDF_BYTES` / `MAX_PDF_PAGES` in `.env` and `.env.local` (see `.env.example`).
+2. Set `MAX_PDF_BYTES` / `MAX_PDF_PAGES` in `.env` (see `.env.example`).
 3. `npm run dev` → open the home page → choose a text-based PDF → **Upload & parse**.
 4. On success you should see `status: PARSED`, a lesson id, page count, and a short text preview.
 5. Bytes land under `storage/pdfs/<lessonId>/…`; `Lesson` + `PdfAsset` rows are in Postgres.
@@ -136,7 +128,7 @@ API: `POST /api/upload` with multipart field `file`.
 
 ## Step 3 — Lesson plan + HITL approval
 
-1. Set a real `DEEPSEEK_API_KEY` in `.env` and `.env.local` (never `NEXT_PUBLIC_*`).
+1. Set a real `DEEPSEEK_API_KEY` in `.env` (never `NEXT_PUBLIC_*`).
 2. Optional: `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `MAX_PLAN_SOURCE_CHARS` (default 60000).
 3. Upload/parse a PDF (Step 2) → open `/lessons/<lessonId>` (link shown after parse).
 4. **Generate lesson plan** → review title, difficulty, objectives.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -150,6 +150,8 @@ function LessonRow({
  */
 export function LessonSidebar({ activeLessonId }: { activeLessonId?: string }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const onUploadPage = pathname === "/";
   const [lessons, setLessons] = useState<LessonLibraryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -268,12 +270,21 @@ export function LessonSidebar({ activeLessonId }: { activeLessonId?: string }) {
           </p>
         </header>
 
-        <Link
-          href="/"
-          className="rounded-md bg-teal-800 px-3 py-2 text-center text-sm font-medium text-white hover:bg-teal-700"
-        >
-          + Upload a new PDF
-        </Link>
+        {onUploadPage ? (
+          <span
+            aria-disabled="true"
+            className="cursor-not-allowed rounded-md bg-teal-800 px-3 py-2 text-center text-sm font-medium text-white opacity-50"
+          >
+            + Upload a new PDF
+          </span>
+        ) : (
+          <Link
+            href="/"
+            className="rounded-md bg-teal-800 px-3 py-2 text-center text-sm font-medium text-white hover:bg-teal-700"
+          >
+            + Upload a new PDF
+          </Link>
+        )}
 
         {(lessons?.length ?? 0) > 5 ? (
           <input
