@@ -227,7 +227,7 @@ export async function getCurrentQuiz(lessonId: string) {
     explanation: view.phase === "correct" ? view.explanation : null,
     progress: buildProgressView(lesson),
     message: finished
-      ? "Lesson complete. See your performance report below."
+      ? "See your performance report below."
       : undefined,
   };
 }
@@ -478,7 +478,7 @@ export async function advanceQuiz(lessonId: string) {
       explanation: null,
       selectedIndex: null,
       progress: buildProgressView(lesson),
-      message: "Lesson complete. See your performance report below.",
+      message: "See your performance report below.",
     };
   }
 
@@ -513,7 +513,7 @@ export async function advanceQuiz(lessonId: string) {
       explanation: null,
       selectedIndex: null,
       progress: buildProgressView(updated),
-      message: "Lesson complete. See your performance report below.",
+      message: "See your performance report below.",
     };
   }
 

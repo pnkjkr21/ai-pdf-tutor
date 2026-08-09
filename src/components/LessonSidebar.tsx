@@ -9,6 +9,9 @@ import {
   shouldShowFileName,
   statusMeta,
 } from "@/components/lesson-status";
+import {
+  LESSON_LIBRARY_CHANGED_EVENT,
+} from "@/lib/lesson-library-sync";
 
 type LessonLibraryItem = {
   lessonId: string;
@@ -175,6 +178,16 @@ export function LessonSidebar({ activeLessonId }: { activeLessonId?: string }) {
   useEffect(() => {
     void load();
   }, [load, activeLessonId]);
+
+  useEffect(() => {
+    const onLibraryChanged = () => {
+      void load();
+    };
+    window.addEventListener(LESSON_LIBRARY_CHANGED_EVENT, onLibraryChanged);
+    return () => {
+      window.removeEventListener(LESSON_LIBRARY_CHANGED_EVENT, onLibraryChanged);
+    };
+  }, [load]);
 
   const remove = useCallback(
     async (lessonId: string) => {

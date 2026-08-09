@@ -157,7 +157,6 @@ export function QuizPlayer({
   return (
     <section className="flex w-full flex-col gap-4 rounded-md border border-stone-200 bg-white px-4 py-4">
       <header className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold text-stone-900">Quiz</h2>
         {state.progress ? (
           <p className="text-sm text-stone-500">
             Question {state.progress.questionPosition} of{" "}

@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 
 import { QuizPlayer } from "@/components/QuizPlayer";
+import { notifyLessonLibraryChanged } from "@/lib/lesson-library-sync";
 import {
   PLAN_REGENERATE_GOALS,
   type PlanRegenerateGoal,
@@ -143,6 +144,7 @@ export function LessonPlanPanel({
     if (data.plan) {
       setDraft(draftFromPlan(data.plan));
     }
+    notifyLessonLibraryChanged(lessonId);
   }
 
   async function loadLesson() {
@@ -262,18 +264,9 @@ export function LessonPlanPanel({
       {!showQuizPlayer ? (
         <header className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold text-stone-900">Lesson plan</h2>
-          <p className="text-sm text-stone-500">
-            Review, edit, regenerate, or approve. Quiz generation stays locked until
-            approval (Step 4).
-          </p>
-          {payload ? (
-            <p className="font-mono text-xs text-stone-500">
-              {payload.lessonId} · {payload.status}
-              {typeof payload.questionCount === "number"
-                ? ` · questions: ${payload.questionCount}`
-                : null}
-            </p>
-          ) : null}
+          {status !== "PLAN_APPROVED" && <p className="text-sm text-stone-500">
+            Click here to generate a lesson plan.
+          </p>}
         </header>
       ) : null}
 
@@ -342,9 +335,10 @@ export function LessonPlanPanel({
             <input
               value={draft.title}
               onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-              className="rounded-md border border-stone-300 px-3 py-2"
+              className="rounded-md border border-stone-300 px-3 py-2 disabled:cursor-not-allowed"
               required
               minLength={3}
+              disabled
             />
           </label>
 
@@ -363,7 +357,7 @@ export function LessonPlanPanel({
                   difficulty: e.target.value as Difficulty,
                 }))
               }
-              className="w-full appearance-none rounded-md border border-stone-300 bg-white py-2 pl-3 pr-10"
+              className="hover:cursor-pointer w-full appearance-none rounded-md border border-stone-300 bg-white py-2 pl-3 pr-10"
               style={{
                 backgroundImage:
                   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2378716c'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E\")",
@@ -390,7 +384,7 @@ export function LessonPlanPanel({
               value={draft.summary}
               disabled
               onChange={(e) => setDraft((d) => ({ ...d, summary: e.target.value }))}
-              className="min-h-20 rounded-md border border-stone-300 px-3 py-2"
+              className="min-h-20 rounded-md border border-stone-300 px-3 py-2 disabled:cursor-not-allowed"
             />
           </label>
 
@@ -561,10 +555,6 @@ export function LessonPlanPanel({
             <p>
               <span className="text-stone-500">Difficulty: </span>
               {payload.plan.difficulty}
-              <span className="text-stone-500">
-                {" "}
-                (controls how hard quiz questions and answer choices will be)
-              </span>
             </p>
             {payload.plan.summary ? (
               <p>

@@ -68,9 +68,7 @@ export type LessonPlanResponse = z.infer<typeof lessonPlanResponseSchema>;
 export const planRegenerateGoalSchema = z.enum([
   "easier",
   "more_challenging",
-  "shorter",
   "deeper_coverage",
-  "skip_known_topics",
 ]);
 
 export type PlanRegenerateGoal = z.infer<typeof planRegenerateGoalSchema>;
@@ -100,22 +98,10 @@ export const PLAN_REGENERATE_GOALS: Array<{
       "Make the plan more challenging: prefer INTERMEDIATE/ADVANCED where the PDF supports it, deeper analysis, synthesis, and application-heavy objectives.",
   },
   {
-    id: "shorter",
-    label: "Make it shorter",
-    instruction:
-      "Make the plan shorter: use fewer objectives (aim for 3, max 4), a tighter title/summary, and only the most essential outcomes from the PDF.",
-  },
-  {
     id: "deeper_coverage",
     label: "Cover the PDF more deeply",
     instruction:
       "Cover the PDF more deeply: expand to more objectives (up to 6) that span important sections/themes in the PDF, with specific, text-grounded outcomes.",
-  },
-  {
-    id: "skip_known_topics",
-    label: "I already know some topics",
-    instruction:
-      "Assume the learner already knows introductory basics. Skip elementary recap objectives; focus on intermediate/advanced or less obvious topics from the PDF that build on prior knowledge.",
   },
 ];
 
