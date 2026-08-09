@@ -63,3 +63,65 @@ export const apiErrorSchema = z.object({
 });
 
 export type LessonPlanResponse = z.infer<typeof lessonPlanResponseSchema>;
+
+/** Preset regenerate goals (no free-text). */
+export const planRegenerateGoalSchema = z.enum([
+  "easier",
+  "more_challenging",
+  "shorter",
+  "deeper_coverage",
+  "skip_known_topics",
+]);
+
+export type PlanRegenerateGoal = z.infer<typeof planRegenerateGoalSchema>;
+
+export const planRegenerateRequestSchema = z.object({
+  goal: planRegenerateGoalSchema,
+});
+
+export type PlanRegenerateRequest = z.infer<typeof planRegenerateRequestSchema>;
+
+export const PLAN_REGENERATE_GOALS: Array<{
+  id: PlanRegenerateGoal;
+  label: string;
+  /** Instruction injected into the LLM regenerate prompt. */
+  instruction: string;
+}> = [
+  {
+    id: "easier",
+    label: "Make it easier",
+    instruction:
+      "Make the plan easier: prefer BEGINNER or lower complexity, simpler vocabulary, foundational objectives, and fewer advanced applications.",
+  },
+  {
+    id: "more_challenging",
+    label: "Make it more challenging",
+    instruction:
+      "Make the plan more challenging: prefer INTERMEDIATE/ADVANCED where the PDF supports it, deeper analysis, synthesis, and application-heavy objectives.",
+  },
+  {
+    id: "shorter",
+    label: "Make it shorter",
+    instruction:
+      "Make the plan shorter: use fewer objectives (aim for 3, max 4), a tighter title/summary, and only the most essential outcomes from the PDF.",
+  },
+  {
+    id: "deeper_coverage",
+    label: "Cover the PDF more deeply",
+    instruction:
+      "Cover the PDF more deeply: expand to more objectives (up to 6) that span important sections/themes in the PDF, with specific, text-grounded outcomes.",
+  },
+  {
+    id: "skip_known_topics",
+    label: "I already know some topics",
+    instruction:
+      "Assume the learner already knows introductory basics. Skip elementary recap objectives; focus on intermediate/advanced or less obvious topics from the PDF that build on prior knowledge.",
+  },
+];
+
+export function getPlanRegenerateGoalInstruction(
+  goal: PlanRegenerateGoal,
+): string {
+  const found = PLAN_REGENERATE_GOALS.find((g) => g.id === goal);
+  return found?.instruction ?? "";
+}

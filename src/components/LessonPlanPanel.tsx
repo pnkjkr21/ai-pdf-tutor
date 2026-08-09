@@ -4,6 +4,10 @@ import { useEffect, useState, useTransition } from "react";
 
 import { QuizGeneratePanel } from "@/components/QuizGeneratePanel";
 import { QuizPlayer } from "@/components/QuizPlayer";
+import {
+  PLAN_REGENERATE_GOALS,
+  type PlanRegenerateGoal,
+} from "@/agents/schemas/lesson-plan";
 
 type Difficulty = "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
 
@@ -35,15 +39,26 @@ type Draft = {
   title: string;
   difficulty: Difficulty;
   summary: string;
-  objectives: string[];
+  objectives: Array<{ key: string; statement: string }>;
 };
+
+function newObjectiveKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `obj-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 function emptyDraft(): Draft {
   return {
     title: "",
     difficulty: "BEGINNER",
     summary: "",
-    objectives: ["", "", ""],
+    objectives: [
+      { key: newObjectiveKey(), statement: "" },
+      { key: newObjectiveKey(), statement: "" },
+      { key: newObjectiveKey(), statement: "" },
+    ],
   };
 }
 
@@ -52,8 +67,51 @@ function draftFromPlan(plan: NonNullable<PlanPayload["plan"]>): Draft {
     title: plan.title,
     difficulty: plan.difficulty,
     summary: plan.summary ?? "",
-    objectives: plan.objectives.map((o) => o.statement),
+    objectives: plan.objectives.map((o) => ({
+      key: o.id,
+      statement: o.statement,
+    })),
   };
+}
+
+function moveObjective<T>(list: T[], from: number, to: number): T[] {
+  if (
+    from === to ||
+    from < 0 ||
+    to < 0 ||
+    from >= list.length ||
+    to >= list.length
+  ) {
+    return list;
+  }
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item!);
+  return next;
+}
+
+function isDraftDirty(
+  draft: Draft,
+  plan: NonNullable<PlanPayload["plan"]> | null | undefined,
+): boolean {
+  if (!plan) {
+    return false;
+  }
+  if (draft.title.trim() !== plan.title.trim()) {
+    return true;
+  }
+  if (draft.difficulty !== plan.difficulty) {
+    return true;
+  }
+  if ((draft.summary.trim() || "") !== (plan.summary?.trim() || "")) {
+    return true;
+  }
+  const draftObjectives = draft.objectives.map((o) => o.statement.trim());
+  const planObjectives = plan.objectives.map((o) => o.statement.trim());
+  if (draftObjectives.length !== planObjectives.length) {
+    return true;
+  }
+  return draftObjectives.some((statement, i) => statement !== planObjectives[i]);
 }
 
 export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
@@ -62,6 +120,15 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [editingObjectiveKey, setEditingObjectiveKey] = useState<string | null>(
+    null,
+  );
+  const [objectiveModalText, setObjectiveModalText] = useState("");
+  const [objectiveModalBaseline, setObjectiveModalBaseline] = useState("");
+  const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const [regenerateGoal, setRegenerateGoal] =
+    useState<PlanRegenerateGoal | null>(null);
 
   function applyPayload(data: PlanPayload) {
     setPayload(data);
@@ -102,6 +169,59 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
   const canGenerate = status === "PARSED";
   const canEdit =
     status === "PLAN_PENDING_APPROVAL" && payload?.plan && !payload.plan.approvedAt;
+  const draftDirty = canEdit ? isDraftDirty(draft, payload.plan) : false;
+  const editingObjectiveIndex =
+    editingObjectiveKey === null
+      ? -1
+      : draft.objectives.findIndex((o) => o.key === editingObjectiveKey);
+  const editingObjective =
+    editingObjectiveIndex >= 0 ? draft.objectives[editingObjectiveIndex] : null;
+  const objectiveModalDirty =
+    objectiveModalText.trim() !== objectiveModalBaseline.trim();
+
+  function openObjectiveModal(key: string, statement: string) {
+    if (isPending) {
+      return;
+    }
+    setEditingObjectiveKey(key);
+    setObjectiveModalText(statement);
+    setObjectiveModalBaseline(statement);
+  }
+
+  function closeObjectiveModal() {
+    setEditingObjectiveKey(null);
+    setObjectiveModalText("");
+    setObjectiveModalBaseline("");
+  }
+
+  function applyObjectiveModal() {
+    if (!editingObjectiveKey || !objectiveModalDirty) {
+      return;
+    }
+    const key = editingObjectiveKey;
+    const nextValue = objectiveModalText;
+    setDraft((d) => ({
+      ...d,
+      objectives: d.objectives.map((o) =>
+        o.key === key ? { ...o, statement: nextValue } : o,
+      ),
+    }));
+    closeObjectiveModal();
+  }
+
+  useEffect(() => {
+    if (!editingObjectiveKey) {
+      return;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeObjectiveModal();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editingObjectiveKey]);
+
   const showApprovedPlan =
     Boolean(payload?.plan) &&
     (status === "PLAN_APPROVED" ||
@@ -183,7 +303,9 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                   title: draft.title,
                   difficulty: draft.difficulty,
                   summary: draft.summary || null,
-                  objectives: draft.objectives.map((s) => s.trim()).filter(Boolean),
+                  objectives: draft.objectives
+                    .map((o) => o.statement.trim())
+                    .filter(Boolean),
                 }),
               });
               const json = (await res.json()) as PlanPayload;
@@ -244,7 +366,10 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                 onClick={() =>
                   setDraft((d) => ({
                     ...d,
-                    objectives: [...d.objectives, ""],
+                    objectives: [
+                      ...d.objectives,
+                      { key: newObjectiveKey(), statement: "" },
+                    ],
                   }))
                 }
                 className="text-sm text-teal-800 disabled:opacity-40"
@@ -252,68 +377,85 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                 Add
               </button>
             </div>
+            <p className="text-xs text-stone-500">
+              Drag the handle to reorder objectives.
+            </p>
             {draft.objectives.map((objective, index) => (
-              <div key={index} className="flex gap-2">
-                <input
-                  value={objective}
-                  onChange={(e) =>
-                    setDraft((d) => {
-                      const objectives = [...d.objectives];
-                      objectives[index] = e.target.value;
-                      return { ...d, objectives };
-                    })
+              <div
+                key={objective.key}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (dragIndex === null || dragIndex === index || isPending) {
+                    return;
                   }
-                  className="flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm"
+                  setDraft((d) => ({
+                    ...d,
+                    objectives: moveObjective(d.objectives, dragIndex, index),
+                  }));
+                  setDragIndex(index);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragIndex(null);
+                }}
+                className={`flex items-center gap-2 rounded-md border px-2 py-1.5 ${
+                  dragIndex === index
+                    ? "border-teal-400 bg-teal-50/80 opacity-80"
+                    : "border-transparent"
+                }`}
+              >
+                <button
+                  type="button"
+                  draggable={!isPending}
+                  disabled={isPending}
+                  onDragStart={(e) => {
+                    setDragIndex(index);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", objective.key);
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null);
+                  }}
+                  className="cursor-grab touch-none select-none px-1 text-lg leading-none text-stone-400 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={`Drag to reorder objective ${index + 1}`}
+                  title="Drag to reorder"
+                >
+                  ⋮⋮
+                </button>
+                <input
+                  value={objective.statement}
+                  readOnly
+                  onClick={() =>
+                    openObjectiveModal(objective.key, objective.statement)
+                  }
+                  onFocus={(e) => {
+                    e.target.blur();
+                    openObjectiveModal(objective.key, objective.statement);
+                  }}
+                  className="flex-1 cursor-pointer truncate rounded-md border border-stone-300 bg-white px-3 py-2 text-left text-sm hover:border-stone-400"
                   placeholder={`Objective ${index + 1}`}
                   required
                   minLength={8}
+                  title="Click to view and edit full objective"
+                  aria-label={`Objective ${index + 1}. Click to edit full text.`}
                 />
                 <button
                   type="button"
                   disabled={isPending || draft.objectives.length <= 3}
-                  onClick={() =>
+                  onClick={() => {
+                    const key = objective.key;
                     setDraft((d) => ({
                       ...d,
-                      objectives: d.objectives.filter((_, i) => i !== index),
-                    }))
-                  }
-                  className="text-sm text-stone-500 disabled:opacity-40"
+                      objectives: d.objectives.filter((o) => o.key !== key),
+                    }));
+                    if (editingObjectiveKey === key) {
+                      closeObjectiveModal();
+                    }
+                  }}
+                  className="rounded px-1.5 py-1 text-sm text-stone-500 hover:cursor-pointer hover:bg-stone-100 hover:text-stone-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-stone-500"
                 >
                   Remove
-                </button>
-                <button
-                  type="button"
-                  disabled={isPending || index === 0}
-                  onClick={() =>
-                    setDraft((d) => {
-                      const objectives = [...d.objectives];
-                      const prev = objectives[index - 1]!;
-                      objectives[index - 1] = objectives[index]!;
-                      objectives[index] = prev;
-                      return { ...d, objectives };
-                    })
-                  }
-                  className="text-sm text-stone-500 disabled:opacity-40"
-                  aria-label="Move up"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  disabled={isPending || index === draft.objectives.length - 1}
-                  onClick={() =>
-                    setDraft((d) => {
-                      const objectives = [...d.objectives];
-                      const next = objectives[index + 1]!;
-                      objectives[index + 1] = objectives[index]!;
-                      objectives[index] = next;
-                      return { ...d, objectives };
-                    })
-                  }
-                  className="text-sm text-stone-500 disabled:opacity-40"
-                  aria-label="Move down"
-                >
-                  ↓
                 </button>
               </div>
             ))}
@@ -322,7 +464,8 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
-              disabled={isPending}
+              disabled={isPending || !draftDirty}
+              title={draftDirty ? undefined : "No changes to save"}
               className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
             >
               Save edits
@@ -330,22 +473,10 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
             <button
               type="button"
               disabled={isPending}
-              onClick={() =>
-                run(async () => {
-                  const res = await fetch(
-                    `/api/lessons/${lessonId}/plan/regenerate`,
-                    { method: "POST" },
-                  );
-                  const json = (await res.json()) as PlanPayload;
-                  if (!res.ok) {
-                    throw new Error(json.error ?? "Regenerate failed");
-                  }
-                  applyPayload(json);
-                  setInfo(
-                    "Plan revised from your previous draft (and the PDF). Still pending approval. Save edits first if you want unsaved changes included next time.",
-                  );
-                })
-              }
+              onClick={() => {
+                setRegenerateGoal(null);
+                setRegenerateOpen(true);
+              }}
               className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
             >
               Regenerate
@@ -420,6 +551,193 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
 
       {!payload && !error ? (
         <p className="text-sm text-stone-500">Loading lesson…</p>
+      ) : null}
+
+      {editingObjective && editingObjectiveIndex >= 0 ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              closeObjectiveModal();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="objective-edit-title"
+            className="flex w-full max-w-lg flex-col gap-3 rounded-lg border border-stone-200 bg-white p-4 shadow-lg"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h3
+                id="objective-edit-title"
+                className="text-base font-semibold text-stone-900"
+              >
+                Objective {editingObjectiveIndex + 1}
+              </h3>
+              <button
+                type="button"
+                onClick={closeObjectiveModal}
+                className="rounded px-2 py-1 text-sm text-stone-500 hover:cursor-pointer hover:bg-stone-100 hover:text-stone-800"
+              >
+                Close
+              </button>
+            </div>
+            <textarea
+              autoFocus
+              value={objectiveModalText}
+              onChange={(e) => setObjectiveModalText(e.target.value)}
+              className="min-h-40 w-full rounded-md border border-stone-300 px-3 py-2 text-sm leading-relaxed text-stone-900"
+              placeholder="Write the full learning objective…"
+              minLength={8}
+            />
+            <p className="text-xs text-stone-500">
+              Click Done to apply this text to the objective. Then use Save edits
+              to persist to the server.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeObjectiveModal}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:cursor-pointer hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!objectiveModalDirty}
+                title={
+                  objectiveModalDirty ? undefined : "No changes to apply"
+                }
+                onClick={applyObjectiveModal}
+                className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white hover:cursor-pointer hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {regenerateOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !isPending) {
+              setRegenerateOpen(false);
+              setRegenerateGoal(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="regenerate-plan-title"
+            className="flex w-full max-w-md flex-col gap-4 rounded-lg border border-stone-200 bg-white p-4 shadow-lg"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  id="regenerate-plan-title"
+                  className="text-base font-semibold text-stone-900"
+                >
+                  What needs to change?
+                </h3>
+                <p className="mt-1 text-sm text-stone-500">
+                  Pick one option. We&apos;ll revise the plan with that goal in
+                  mind.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => {
+                  setRegenerateOpen(false);
+                  setRegenerateGoal(null);
+                }}
+                className="rounded px-2 py-1 text-sm text-stone-500 hover:cursor-pointer hover:bg-stone-100 hover:text-stone-800 disabled:opacity-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <fieldset className="flex flex-col gap-2" disabled={isPending}>
+              <legend className="sr-only">Regenerate goal</legend>
+              {PLAN_REGENERATE_GOALS.map((goal) => (
+                <label
+                  key={goal.id}
+                  className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm text-stone-800 ${
+                    regenerateGoal === goal.id
+                      ? "border-teal-600 bg-teal-50"
+                      : "border-stone-200 hover:border-stone-300"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="regenerate-goal"
+                    value={goal.id}
+                    checked={regenerateGoal === goal.id}
+                    onChange={() => setRegenerateGoal(goal.id)}
+                    className="mt-0.5"
+                  />
+                  <span>{goal.label}</span>
+                </label>
+              ))}
+            </fieldset>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => {
+                  setRegenerateOpen(false);
+                  setRegenerateGoal(null);
+                }}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:cursor-pointer hover:bg-stone-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isPending || !regenerateGoal}
+                title={
+                  regenerateGoal ? undefined : "Choose what you want to change"
+                }
+                onClick={() => {
+                  if (!regenerateGoal) {
+                    return;
+                  }
+                  const goal = regenerateGoal;
+                  run(async () => {
+                    const res = await fetch(
+                      `/api/lessons/${lessonId}/plan/regenerate`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ goal }),
+                      },
+                    );
+                    const json = (await res.json()) as PlanPayload;
+                    if (!res.ok) {
+                      throw new Error(json.error ?? "Regenerate failed");
+                    }
+                    applyPayload(json);
+                    setRegenerateOpen(false);
+                    setRegenerateGoal(null);
+                    setInfo(
+                      "Plan revised using your selected goal. Still pending approval.",
+                    );
+                  });
+                }}
+                className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white hover:cursor-pointer hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isPending ? "Regenerating…" : "Regenerate plan"}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </section>
   );

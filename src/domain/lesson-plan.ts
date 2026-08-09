@@ -1,7 +1,9 @@
 import { generateLessonPlanFromPdfText } from "@/agents/llm/deepseek";
 import {
   lessonPlanEditSchema,
+  planRegenerateGoalSchema,
   type LessonPlanEditInput,
+  type PlanRegenerateGoal,
 } from "@/agents/schemas/lesson-plan";
 import {
   lessonRepository,
@@ -107,10 +109,11 @@ export async function generatePlanForLesson(
 
 /**
  * Replace pending plan with a DeepSeek revision of the current pending plan.
- * Passes the saved plan as context. Keeps old plan if LLM fails.
+ * Passes the saved plan + learner goal as context. Keeps old plan if LLM fails.
  */
 export async function regeneratePlanForLesson(
   lessonId: string,
+  rawGoal: unknown,
 ): Promise<LessonWithPlan> {
   const lesson = requireLesson(await lessonRepository.findById(lessonId), lessonId);
 
@@ -130,6 +133,17 @@ export async function regeneratePlanForLesson(
     );
   }
 
+  let regenerateGoal: PlanRegenerateGoal;
+  try {
+    regenerateGoal = planRegenerateGoalSchema.parse(rawGoal);
+  } catch {
+    throw new PlanDomainError(
+      "INVALID_BODY",
+      "Choose a regenerate goal: easier, more_challenging, shorter, deeper_coverage, or skip_known_topics.",
+      400,
+    );
+  }
+
   const extractedText = requireExtractedText(lesson);
   const previousPlan = {
     title: lesson.plan.title,
@@ -144,6 +158,7 @@ export async function regeneratePlanForLesson(
   try {
     llmPlan = await generateLessonPlanFromPdfText(extractedText, {
       previousPlan,
+      regenerateGoal,
     });
   } catch (error) {
     const message =

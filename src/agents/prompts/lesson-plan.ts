@@ -1,4 +1,8 @@
 import { getMaxPlanSourceChars } from "@/lib/env";
+import {
+  getPlanRegenerateGoalInstruction,
+  type PlanRegenerateGoal,
+} from "@/agents/schemas/lesson-plan";
 
 export type PreviousLessonPlan = {
   title: string;
@@ -30,6 +34,7 @@ export function buildLessonPlanSystemPrompt(isRevision = false): string {
         "When a previous plan is provided, you MUST produce a meaningfully DIFFERENT revised plan.",
         "Do not paraphrase objectives one-for-one or keep the same title/summary with cosmetic edits.",
         "Change emphasis, sequencing, and wording; still stay grounded only in the PDF.",
+        "When a learner goal is provided, prioritize that goal while revising.",
       ].join(" ")
     : "";
 
@@ -52,6 +57,7 @@ export function buildLessonPlanUserPrompt(params: {
   truncated: boolean;
   maxChars: number;
   previousPlan?: PreviousLessonPlan;
+  regenerateGoal?: PlanRegenerateGoal;
 }): string {
   const note = params.truncated
     ? `\n\n[Note: PDF text was truncated to the first ${params.maxChars} characters for model context.]`
@@ -66,6 +72,15 @@ export function buildLessonPlanUserPrompt(params: {
     .map((statement, i) => `${i + 1}. ${statement}`)
     .join("\n");
 
+  const goalBlock = params.regenerateGoal
+    ? [
+        "",
+        "--- LEARNER GOAL (highest priority while revising) ---",
+        getPlanRegenerateGoalInstruction(params.regenerateGoal),
+        "--- END LEARNER GOAL ---",
+      ]
+    : [];
+
   return [
     "Create a REVISED lesson plan that is clearly different from the previous one.",
     "Hard requirements:",
@@ -76,6 +91,7 @@ export function buildLessonPlanUserPrompt(params: {
     "- Stay grounded only in the PDF text below.",
     "Treat the previous plan as a draft to improve and diverge from — not a template to echo.",
     "Still return the required JSON shape with 3–6 objectives.",
+    ...goalBlock,
     note,
     "",
     "--- PREVIOUS PLAN (do not echo) ---",

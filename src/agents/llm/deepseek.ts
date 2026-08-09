@@ -8,6 +8,7 @@ import {
 import {
   lessonPlanLlmSchema,
   type LessonPlanLlmOutput,
+  type PlanRegenerateGoal,
 } from "@/agents/schemas/lesson-plan";
 import { mcqLlmSchema, type McqLlmOutput } from "@/agents/schemas/mcq";
 import {
@@ -87,6 +88,8 @@ export type GenerateLessonPlanOptions = {
     summary: string | null;
     objectives: string[];
   };
+  /** Preset learner goal for regenerate (from regenerate modal). */
+  regenerateGoal?: PlanRegenerateGoal;
 };
 
 /**
@@ -127,6 +130,7 @@ export async function generateLessonPlanFromPdfText(
 
   const previousPlan = options?.previousPlan;
   const isRevision = Boolean(previousPlan);
+  const regenerateGoal = options?.regenerateGoal;
   const model = createDeepSeekChat(isRevision ? 0.55 : 0.2);
 
   async function invokeOnce(extraInstruction?: string): Promise<LessonPlanLlmOutput> {
@@ -135,6 +139,7 @@ export async function generateLessonPlanFromPdfText(
       truncated,
       maxChars,
       previousPlan,
+      regenerateGoal,
     });
     const response = await model.invoke([
       new SystemMessage(buildLessonPlanSystemPrompt(isRevision)),
@@ -154,7 +159,12 @@ export async function generateLessonPlanFromPdfText(
           "Your last draft was too similar to the previous plan.",
           "Rewrite with a clearly different title, summary, and objective set.",
           "Change focus and wording — do not paraphrase the prior objectives.",
-        ].join(" "),
+          regenerateGoal
+            ? "Keep honoring the learner goal from the prompt."
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
     }
     return candidate;
