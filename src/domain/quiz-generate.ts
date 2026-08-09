@@ -58,6 +58,52 @@ export function toQuizClientSummary(lesson: LessonWithPlan) {
   };
 }
 
+const MAX_QUESTIONS_PER_OBJECTIVE = 2;
+const MAX_QUESTIONS_TOTAL = 12;
+
+/** Fisher–Yates shuffle (in place). */
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = items[i]!;
+    items[i] = items[j]!;
+    items[j] = tmp;
+  }
+  return items;
+}
+
+/**
+ * If the model returns more than maxPerObjective for an objective,
+ * randomly keep that many (preserving relative order of survivors).
+ */
+export function trimExcessQuestionsPerObjective(
+  items: McqItemLlm[],
+  maxPerObjective = MAX_QUESTIONS_PER_OBJECTIVE,
+): McqItemLlm[] {
+  const byObjective = new Map<number, McqItemLlm[]>();
+  for (const item of items) {
+    const list = byObjective.get(item.objectiveOrderIndex) ?? [];
+    list.push(item);
+    byObjective.set(item.objectiveOrderIndex, list);
+  }
+
+  const kept: McqItemLlm[] = [];
+  for (const [, group] of byObjective) {
+    if (group.length <= maxPerObjective) {
+      kept.push(...group);
+      continue;
+    }
+    const selected = shuffleInPlace([...group]).slice(0, maxPerObjective);
+    // Keep original relative order among the randomly chosen items.
+    const selectedSet = new Set(selected);
+    kept.push(...group.filter((item) => selectedSet.has(item)));
+  }
+
+  // Preserve first-seen order across objectives as in the LLM list.
+  const keptSet = new Set(kept);
+  return items.filter((item) => keptSet.has(item)).slice(0, MAX_QUESTIONS_TOTAL);
+}
+
 function assertCoverage(
   items: McqItemLlm[],
   objectives: LessonWithPlan["objectives"],
@@ -103,19 +149,19 @@ function assertCoverage(
         502,
       );
     }
-    if (n > 2) {
+    if (n > MAX_QUESTIONS_PER_OBJECTIVE) {
       throw new PlanDomainError(
         "INVALID_LLM_OUTPUT",
-        `Too many MCQs for objective ${objective.orderIndex} (max 2).`,
+        `Too many MCQs for objective ${objective.orderIndex} (max ${MAX_QUESTIONS_PER_OBJECTIVE}).`,
         502,
       );
     }
   }
 
-  if (items.length > 12) {
+  if (items.length > MAX_QUESTIONS_TOTAL) {
     throw new PlanDomainError(
       "INVALID_LLM_OUTPUT",
-      "Too many MCQs generated (max 12).",
+      `Too many MCQs generated (max ${MAX_QUESTIONS_TOTAL}).`,
       502,
     );
   }
@@ -191,43 +237,40 @@ export async function generateQuizForLesson(
   }
 
   try {
-    assertCoverage(llmOutput.questions, lesson.objectives);
-  } catch (error) {
-    if (error instanceof PlanDomainError) {
-      throw error;
-    }
-    throw error;
-  }
+    const questions = trimExcessQuestionsPerObjective(llmOutput.questions);
+    assertCoverage(questions, lesson.objectives);
 
-  const byOrder = new Map(
-    lesson.objectives.map((o) => [o.orderIndex, o] as const),
-  );
+    const byOrder = new Map(
+      lesson.objectives.map((o) => [o.orderIndex, o] as const),
+    );
 
-  const rows = llmOutput.questions.map((item, orderIndex) => {
-    const objective = byOrder.get(item.objectiveOrderIndex);
-    if (!objective) {
-      throw new PlanDomainError(
-        "INVALID_LLM_OUTPUT",
-        `Unknown objectiveOrderIndex ${item.objectiveOrderIndex}.`,
-        502,
-      );
-    }
-    return {
-      objectiveId: objective.id,
-      orderIndex,
-      prompt: item.prompt,
-      choices: item.choices,
-      correctIndex: item.correctIndex,
-      explanation: item.explanation,
-    };
-  });
+    const rows = questions.map((item, orderIndex) => {
+      const objective = byOrder.get(item.objectiveOrderIndex);
+      if (!objective) {
+        throw new PlanDomainError(
+          "INVALID_LLM_OUTPUT",
+          `Unknown objectiveOrderIndex ${item.objectiveOrderIndex}.`,
+          502,
+        );
+      }
+      return {
+        objectiveId: objective.id,
+        orderIndex,
+        prompt: item.prompt,
+        choices: item.choices,
+        correctIndex: item.correctIndex,
+        explanation: item.explanation,
+      };
+    });
 
-  try {
     return await lessonRepository.createQuizReady({
       lessonId,
       questions: rows,
     });
   } catch (error) {
+    if (error instanceof PlanDomainError) {
+      throw error;
+    }
     const message =
       error instanceof Error ? error.message : "Failed to persist quiz.";
     if (/already exist/i.test(message)) {

@@ -145,16 +145,12 @@ export function QuizGeneratePanel({
                   <span className="font-medium">Q{q.orderIndex + 1}: </span>
                   {q.prompt}
                   <span className="block text-xs text-stone-500">
-                    objective #{q.objectiveOrderIndex} · {q.choices.length} choices
-                    (answers hidden)
+                    objective #{q.objectiveOrderIndex + 1}
                   </span>
                 </li>
               ))}
             </ol>
           ) : null}
-          <p className="mt-3 text-xs text-stone-500">
-            Use the quiz player below to answer one question at a time.
-          </p>
         </div>
       ) : null}
 

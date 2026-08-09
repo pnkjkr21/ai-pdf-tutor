@@ -20,9 +20,9 @@ export const mcqItemLlmSchema = z.object({
   explanation: z.string().trim().min(10).max(2000),
 });
 
-/** Structured LLM MCQ output. Cap total questions for MVP. */
+/** Structured LLM MCQ output. Allow overshoot; domain trims to ≤2/objective and ≤12 total. */
 export const mcqLlmSchema = z.object({
-  questions: z.array(mcqItemLlmSchema).min(1).max(12),
+  questions: z.array(mcqItemLlmSchema).min(1).max(24),
 });
 
 export type McqLlmOutput = z.infer<typeof mcqLlmSchema>;

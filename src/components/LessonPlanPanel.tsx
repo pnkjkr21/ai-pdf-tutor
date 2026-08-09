@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useTransition } from "react";
 
-import { QuizGeneratePanel } from "@/components/QuizGeneratePanel";
 import { QuizPlayer } from "@/components/QuizPlayer";
 import {
   PLAN_REGENERATE_GOALS,
@@ -114,7 +113,14 @@ function isDraftDirty(
   return draftObjectives.some((statement, i) => statement !== planObjectives[i]);
 }
 
-export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
+export function LessonPlanPanel({
+  lessonId,
+  onQuizActiveChange,
+}: {
+  lessonId: string;
+  /** Called when the student enters/leaves the active quiz UI. */
+  onQuizActiveChange?: (active: boolean) => void;
+}) {
   const [payload, setPayload] = useState<PlanPayload | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +135,8 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
   const [regenerateOpen, setRegenerateOpen] = useState(false);
   const [regenerateGoal, setRegenerateGoal] =
     useState<PlanRegenerateGoal | null>(null);
+  /** User must click Start quiz before questions appear (except resume/complete). */
+  const [quizStarted, setQuizStarted] = useState(false);
 
   function applyPayload(data: PlanPayload) {
     setPayload(data);
@@ -150,6 +158,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
 
   useEffect(() => {
     void loadLesson();
+    setQuizStarted(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per lessonId
   }, [lessonId]);
 
@@ -178,6 +187,13 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
     editingObjectiveIndex >= 0 ? draft.objectives[editingObjectiveIndex] : null;
   const objectiveModalDirty =
     objectiveModalText.trim() !== objectiveModalBaseline.trim();
+
+  useEffect(() => {
+    // Resume an in-progress or finished quiz without requiring Start again.
+    if (status === "IN_PROGRESS" || status === "COMPLETED") {
+      setQuizStarted(true);
+    }
+  }, [status]);
 
   function openObjectiveModal(key: string, statement: string) {
     if (isPending) {
@@ -228,41 +244,45 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
       status === "QUIZ_READY" ||
       status === "IN_PROGRESS" ||
       status === "COMPLETED");
-  const showQuizPanel =
+  const canStartQuiz =
     status === "PLAN_APPROVED" ||
-    status === "QUIZ_READY" ||
-    status === "IN_PROGRESS" ||
-    status === "COMPLETED" ||
-    (payload?.questionCount ?? 0) > 0;
+    (status === "QUIZ_READY" && !quizStarted);
   const showQuizPlayer =
-    status === "QUIZ_READY" ||
-    status === "IN_PROGRESS" ||
-    status === "COMPLETED";
+    quizStarted &&
+    (status === "QUIZ_READY" ||
+      status === "IN_PROGRESS" ||
+      status === "COMPLETED");
+
+  useEffect(() => {
+    onQuizActiveChange?.(showQuizPlayer);
+  }, [showQuizPlayer, onQuizActiveChange]);
 
   return (
     <section className="flex w-full flex-col gap-4 rounded-md border border-stone-200 bg-white px-4 py-4">
-      <header className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold text-stone-900">Lesson plan</h2>
-        <p className="text-sm text-stone-500">
-          Review, edit, regenerate, or approve. Quiz generation stays locked until
-          approval (Step 4).
-        </p>
-        {payload ? (
-          <p className="font-mono text-xs text-stone-500">
-            {payload.lessonId} · {payload.status}
-            {typeof payload.questionCount === "number"
-              ? ` · questions: ${payload.questionCount}`
-              : null}
+      {!showQuizPlayer ? (
+        <header className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold text-stone-900">Lesson plan</h2>
+          <p className="text-sm text-stone-500">
+            Review, edit, regenerate, or approve. Quiz generation stays locked until
+            approval (Step 4).
           </p>
-        ) : null}
-      </header>
+          {payload ? (
+            <p className="font-mono text-xs text-stone-500">
+              {payload.lessonId} · {payload.status}
+              {typeof payload.questionCount === "number"
+                ? ` · questions: ${payload.questionCount}`
+                : null}
+            </p>
+          ) : null}
+        </header>
+      ) : null}
 
       {error ? (
         <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
         </p>
       ) : null}
-      {info ? (
+      {!showQuizPlayer && info ? (
         <p className="rounded-md bg-teal-50 px-3 py-2 text-sm text-teal-900">{info}</p>
       ) : null}
 
@@ -329,7 +349,12 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
           </label>
 
           <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-stone-700">Difficulty</span>
+            <span className="font-medium text-stone-700">
+              Difficulty{" "}
+              <span className="font-normal text-stone-500">
+                (controls how hard quiz questions and answer choices will be)
+              </span>
+            </span>
             <select
               value={draft.difficulty}
               onChange={(e) =>
@@ -338,18 +363,32 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                   difficulty: e.target.value as Difficulty,
                 }))
               }
-              className="rounded-md border border-stone-300 px-3 py-2"
+              className="w-full appearance-none rounded-md border border-stone-300 bg-white py-2 pl-3 pr-10"
+              style={{
+                backgroundImage:
+                  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2378716c'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E\")",
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "right 0.75rem center",
+                backgroundSize: "1rem",
+              }}
             >
-              <option value="BEGINNER">BEGINNER</option>
-              <option value="INTERMEDIATE">INTERMEDIATE</option>
-              <option value="ADVANCED">ADVANCED</option>
+              <option value="BEGINNER">
+                BEGINNER
+              </option>
+              <option value="INTERMEDIATE">
+                INTERMEDIATE
+              </option>
+              <option value="ADVANCED">
+                ADVANCED
+              </option>
             </select>
           </label>
 
           <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-stone-700">Summary (optional)</span>
+            <span className="font-medium text-stone-700">Summary</span>
             <textarea
               value={draft.summary}
+              disabled
               onChange={(e) => setDraft((d) => ({ ...d, summary: e.target.value }))}
               className="min-h-20 rounded-md border border-stone-300 px-3 py-2"
             />
@@ -358,7 +397,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-stone-700">
-                Objectives (3–6)
+                Objectives:
               </span>
               <button
                 type="button"
@@ -509,7 +548,7 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
         </form>
       ) : null}
 
-      {showApprovedPlan && payload?.plan ? (
+      {showApprovedPlan && payload?.plan && !showQuizPlayer ? (
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2 text-sm text-stone-800">
             <p className="font-medium text-teal-900">
@@ -522,6 +561,10 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
             <p>
               <span className="text-stone-500">Difficulty: </span>
               {payload.plan.difficulty}
+              <span className="text-stone-500">
+                {" "}
+                (controls how hard quiz questions and answer choices will be)
+              </span>
             </p>
             {payload.plan.summary ? (
               <p>
@@ -535,18 +578,48 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
               ))}
             </ol>
           </div>
-          {showQuizPanel ? (
-            <QuizGeneratePanel
-              lessonId={lessonId}
-              status={payload.status}
-              questionCount={payload.questionCount ?? 0}
-              onQuizGenerated={loadLesson}
-            />
-          ) : null}
-          {showQuizPlayer ? (
-            <QuizPlayer lessonId={lessonId} onStatusChange={loadLesson} />
+
+          {canStartQuiz ? (
+            <div className="flex justify-center py-6">
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() =>
+                  run(async () => {
+                    const needsGenerate = status === "PLAN_APPROVED";
+                    if (needsGenerate) {
+                      const res = await fetch(
+                        `/api/lessons/${lessonId}/quiz/generate`,
+                        { method: "POST" },
+                      );
+                      const json = (await res.json()) as {
+                        error?: string;
+                        message?: string;
+                      };
+                      if (!res.ok) {
+                        throw new Error(json.error ?? "Quiz generation failed");
+                      }
+                      await loadLesson();
+                    }
+                    setInfo(null);
+                    setQuizStarted(true);
+                  })
+                }
+                className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md bg-teal-800 px-6 py-2.5 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
+              >
+                {isPending
+                  ? status === "PLAN_APPROVED"
+                    ? "Preparing quiz…"
+                    : "Starting…"
+                  : "Start Quiz"}
+              </button>
+            </div>
           ) : null}
         </div>
+      ) : null}
+
+      {showQuizPlayer ? (
+        <QuizPlayer lessonId={lessonId} onStatusChange={loadLesson} />
       ) : null}
 
       {!payload && !error ? (

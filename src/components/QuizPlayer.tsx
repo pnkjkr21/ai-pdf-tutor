@@ -162,9 +162,7 @@ export function QuizPlayer({
           <p className="text-sm text-stone-500">
             Question {state.progress.questionPosition} of{" "}
             {state.progress.questionTotal} · Objective{" "}
-            {state.progress.objectivePosition} of {state.progress.objectiveTotal} ·
-            Completed {state.progress.questionsCompleted}/
-            {state.progress.questionTotal}
+            {state.progress.objectivePosition} of {state.progress.objectiveTotal}
           </p>
         ) : null}
       </header>

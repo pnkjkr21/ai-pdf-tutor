@@ -26,6 +26,10 @@ export function buildMcqSystemPrompt(): string {
     "Explanations should teach the concept without merely restating “because it is correct.”",
     "Map each question to an objective via objectiveOrderIndex (0-based, matching the list provided).",
     "Create 1 or 2 questions per learning objective. Total questions must be between the objective count and 12.",
+    "Match question complexity to the provided Difficulty:",
+    "BEGINNER — simpler wording; focus on recall and basic understanding; distractors should be clearly wrong if the concept is known.",
+    "INTERMEDIATE — require applying concepts; moderately tricky but fair distractors.",
+    "ADVANCED — deeper analysis/synthesis; subtle, plausible distractors without being unfair or outside the PDF.",
     "Respond with a single JSON object only (no markdown fences):",
     '{ "questions": [ { "objectiveOrderIndex": number, "prompt": string, "choices": [string,string,string,string], "correctIndex": 0|1|2|3, "explanation": string } ] }',
   ].join(" ");
