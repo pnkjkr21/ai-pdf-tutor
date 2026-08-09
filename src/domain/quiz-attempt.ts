@@ -231,6 +231,90 @@ export async function getCurrentQuiz(lessonId: string) {
   };
 }
 
+export type ReviewedAttempt = {
+  selectedIndex: number;
+  outcome: "CORRECT" | "INCORRECT";
+  isFirstAttempt: boolean;
+  hintRequested: boolean;
+  learnMoreRequested: boolean;
+  createdAt: string;
+};
+
+export type ReviewedQuestion = {
+  questionId: string;
+  orderIndex: number;
+  questionNumber: number;
+  objectiveId: string;
+  objectiveOrderIndex: number;
+  objectiveStatement: string | null;
+  prompt: string;
+  choices: [string, string, string, string];
+  /** Safe to expose: this question already has a CORRECT attempt. */
+  correctIndex: number;
+  explanation: string;
+  attempts: ReviewedAttempt[];
+  attemptCount: number;
+  solvedFirstTry: boolean;
+};
+
+/**
+ * Read-only trail of questions the learner has already answered correctly, so
+ * they can look back mid-quiz. Unsolved questions are never included — their
+ * `correctIndex` / `explanation` must stay server-side.
+ */
+export async function getQuizHistory(lessonId: string) {
+  const lesson = requireQuizLesson(
+    await quizRepository.findQuizState(lessonId),
+    lessonId,
+  );
+
+  const objectiveById = new Map(lesson.objectives.map((o) => [o.id, o]));
+  const items: ReviewedQuestion[] = [];
+
+  for (const question of lesson.questions) {
+    const attempts = attemptsForQuestion(lesson, question.id);
+    if (!attempts.some((a) => a.outcome === "CORRECT")) {
+      continue;
+    }
+
+    const objective = objectiveById.get(question.objectiveId) ?? null;
+    const firstAttempt = attempts.find((a) => a.isFirstAttempt) ?? attempts[0];
+
+    items.push({
+      questionId: question.id,
+      orderIndex: question.orderIndex,
+      questionNumber: question.orderIndex + 1,
+      objectiveId: question.objectiveId,
+      objectiveOrderIndex: objective?.orderIndex ?? 0,
+      objectiveStatement: objective?.statement ?? null,
+      prompt: question.prompt,
+      choices: parseChoices(question.choicesJson),
+      correctIndex: question.correctIndex,
+      explanation: question.explanation,
+      attempts: attempts.map((a) => ({
+        selectedIndex: a.selectedIndex,
+        outcome: a.outcome,
+        isFirstAttempt: a.isFirstAttempt,
+        hintRequested: a.hintRequested,
+        learnMoreRequested: a.learnMoreRequested,
+        createdAt: a.createdAt.toISOString(),
+      })),
+      attemptCount: attempts.length,
+      solvedFirstTry: firstAttempt?.outcome === "CORRECT",
+    });
+  }
+
+  return {
+    ok: true as const,
+    lessonId,
+    // Total questions in the quiz, so the UI can say "3 of 8 reviewed".
+    questionTotal: lesson.questions.length,
+    reviewedCount: items.length,
+    currentQuestionIndex: lesson.progress!.currentQuestionIndex,
+    questions: items,
+  };
+}
+
 export const answerBodySchema = z.object({
   questionId: z.string().min(1),
   selectedIndex: z.union([

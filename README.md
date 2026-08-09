@@ -131,6 +131,7 @@ Open [http://localhost:3000](http://localhost:3000). Health check: [http://local
 API: `POST /api/upload` with multipart field `file`.
 
 - Invalid / oversized / non-PDF → `400` (no lesson created).
+- Byte-identical to a PDF you already analyzed → `409` (see Step 10; no lesson created).
 - Unreadable or empty extractable text → `422` with `status: FAILED` and `errorMessage` (lesson + file kept for debugging).
 
 ## Step 3 — Lesson plan + HITL approval
@@ -224,12 +225,84 @@ APIs:
 
 No embeddings / vector DB — PDF text truncation only (same pattern as plan/MCQ/hints).
 
+## Step 8 — PDF library side panel
+
+Every page renders a left rail (`LessonSidebar` inside `AppShell`) listing every PDF analysed so far, so you can switch lessons mid-analysis without losing state — progress lives in Postgres per lesson.
+
+- Most recently updated first, with status badge, `questionsCompleted/questionCount`, and relative timestamp.
+- Active lesson is highlighted (`aria-current="page"`); **+ Upload a new PDF** returns to the home page.
+- A name filter appears once there are more than five lessons.
+- Collapsed behind a **Browse PDF library** toggle below the `lg` breakpoint.
+
+API: `GET /api/lessons?limit=<1–50>` (default and hard cap 50; invalid values fall back to the default).
+
+The payload is metadata only — it never selects `PdfAsset.extractedText` or any `Question` column.
+
+## Step 9 — Review previously answered questions
+
+While a quiz is running, **Review previous questions** opens a read-only trail of everything already answered correctly, with ← Previous / Next → and **Back to current question**.
+
+- Each reviewed question shows every choice tried, the correct choice, the explanation, and whether a hint / learn more was used.
+- Purely read-only: it never advances the cursor, records an attempt, or changes lesson status.
+- Available mid-quiz and after completion; the live question and completion report are hidden while the panel is open.
+
+API: `GET /api/lessons/:id/quiz/history`
+
+| Rule | Behavior |
+| --- | --- |
+| Answer secrecy | Only questions with a `CORRECT` attempt are returned. Unsolved questions — including the current one — are omitted entirely, so their `prompt`, `correctIndex`, and `explanation` never reach the client. |
+| Fail closed | The route re-asserts the invariant per item before responding and `500`s rather than serve an unsolved question's key. |
+| Wrong status | `409 INVALID_STATUS` unless `QUIZ_READY` / `IN_PROGRESS` / `COMPLETED`; `404` for an unknown lesson. |
+
+## Step 10 — Duplicate PDF detection & lesson delete
+
+### Re-upload detection
+
+`PdfAsset.sha256` holds a sha256 of the **raw uploaded bytes**. It is computed in `uploadAndParsePdf` after validation but **before** the `Lesson` row or the file exist, so a detected duplicate writes nothing at all.
+
+- Match → `409` with `code: "DUPLICATE_PDF"` and a `duplicate` object naming the existing lesson (title, status, `questionsCompleted/questionCount`, upload date).
+- The UI offers **Open existing lesson** or **Upload a fresh copy anyway**. The override re-sends the same file with form field `allowDuplicate=true`; nothing is replaced — you get a second, independent lesson.
+- The hash is recorded on the override path too, so a third upload still sees both copies.
+
+| Rule | Behavior |
+| --- | --- |
+| Blocking statuses | `PARSED`, `PLAN_PENDING_APPROVAL`, `PLAN_APPROVED`, `QUIZ_READY`, `IN_PROGRESS`, `COMPLETED` |
+| `FAILED` never blocks | Re-uploading is the fix for a failed parse — blocking would wedge every scanned PDF permanently |
+| `UPLOADED` never blocks | Means a crashed mid-flight upload; also stops a double-submit from colliding with its own in-flight row |
+| Validation wins | A non-PDF still gets its specific `400` (`INVALID_MAGIC`, `TOO_LARGE`, …), never a `409` |
+| Index is not unique | The override deliberately creates a second row with the same hash |
+| Ordering | Most recently updated match, matching the sidebar's top-to-bottom order |
+
+Only exact byte matches are detected. The same document re-exported to different bytes is not — `Lesson.sourceTextHash` would catch that, but it is only available after parsing (i.e. after the lesson and file already exist), so it stays write-only.
+
+**Backfill** — rows uploaded before this step have `sha256: null` and never match. Populate them once:
+
+```bash
+node scripts/backfill-pdf-hashes.mjs
+```
+
+Idempotent (only touches `sha256 IS NULL`). A missing file is reported, not fatal — that row keeps `sha256: null` and simply never blocks.
+
+### Delete a lesson
+
+Hover a row in the sidebar (always visible on touch) → confirm inline. This is what keeps duplicate-blocking recoverable: delete the old copy and the same PDF uploads cleanly again.
+
+API: `DELETE /api/lessons/:id` → `{ ok: true, lessonId }`, or `404 NOT_FOUND`.
+
+| Rule | Behavior |
+| --- | --- |
+| Cascade | All child rows (`PdfAsset`, plan, objectives, questions, attempts, progress) are `onDelete: Cascade` |
+| Disk | `PdfStorage.deleteLessonFiles(lessonId)` removes `storage/pdfs/<lessonId>/` **and** the directory itself |
+| Order | DB first, disk second, **not** in a transaction — Prisma cannot roll back an `unlink`. A failed disk cleanup leaves an invisible orphan directory; the reverse would leave a visibly broken lesson whose hash still blocks re-upload |
+| Deleting the open lesson | Redirects to `/` |
+
 ## Security notes (MVP)
 
 - `DEEPSEEK_API_KEY` is **server-only**. Never use `NEXT_PUBLIC_*` for secrets.
 - Correct MCQ answers stay server-side until the user answers correctly.
 - Treat uploads and model outputs as untrusted; validate LLM JSON with Zod before persist.
-- Local PDF storage rejects path traversal (`..`, absolute paths).
+- Local PDF storage rejects path traversal (`..`, absolute paths). `deleteLessonFiles` is a recursive delete, so it additionally requires the lesson id to match `^[A-Za-z0-9_-]+$` and refuses to resolve to the storage root.
+- The duplicate `409` exposes lesson metadata. Fine for a single-user MVP, but any multi-tenant version **must** scope `findDuplicateByPdfHash` by owner, or uploading a file becomes a hash oracle for other users' documents.
 
 ## Intentionally out of scope (MVP)
 

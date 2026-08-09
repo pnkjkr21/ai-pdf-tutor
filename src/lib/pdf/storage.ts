@@ -22,6 +22,10 @@ export type PdfStorage = {
   /** Read previously stored PDF bytes by storage path. */
   read(storagePath: string): Promise<Buffer>;
 
-  /** Delete stored object if present (idempotent). */
-  delete(storagePath: string): Promise<void>;
+  /**
+   * Remove every stored object for a lesson, including its container.
+   * Idempotent. Keyed on lessonId rather than storagePath so it can also clean
+   * up a lesson that wrote bytes but crashed before its PdfAsset row existed.
+   */
+  deleteLessonFiles(lessonId: string): Promise<void>;
 };

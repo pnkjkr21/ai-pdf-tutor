@@ -10,7 +10,14 @@ export {
 } from "./validate";
 export {
   buildTextPreview,
+  duplicateLessonSchema,
+  uploadDuplicateSchema,
   uploadErrorSchema,
   uploadSuccessSchema,
 } from "./upload-schemas";
-export type { UploadErrorPayload, UploadSuccessPayload } from "./upload-schemas";
+export type {
+  DuplicateLesson,
+  UploadDuplicatePayload,
+  UploadErrorPayload,
+  UploadSuccessPayload,
+} from "./upload-schemas";
