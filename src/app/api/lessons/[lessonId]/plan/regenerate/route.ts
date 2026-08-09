@@ -10,7 +10,7 @@ type RouteContext = { params: Promise<{ lessonId: string }> };
 
 export const runtime = "nodejs";
 
-/** POST — replace pending plan from PDF text (DeepSeek). No MCQs. */
+/** POST — revise pending plan from PDF + previous plan (DeepSeek). No MCQs. */
 export async function POST(_request: Request, context: RouteContext) {
   const { lessonId } = await context.params;
   try {

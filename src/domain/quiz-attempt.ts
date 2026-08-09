@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { generateQuizHint, generateQuizLearnMore } from "@/agents/llm/deepseek";
+import { MAX_HINTS_PER_QUESTION } from "@/agents/schemas/hint";
 import { PlanDomainError } from "@/domain/errors";
 import {
   quizRepository,
@@ -544,7 +545,10 @@ export async function advanceQuiz(lessonId: string) {
   };
 }
 
-export async function requestQuizHint(lessonId: string) {
+export async function requestQuizHint(
+  lessonId: string,
+  previousHints: string[] = [],
+) {
   const lesson = requireQuizLesson(
     await quizRepository.findQuizState(lessonId),
     lessonId,
@@ -575,12 +579,24 @@ export async function requestQuizHint(lessonId: string) {
   }
 
   const choices = parseChoices(current.choicesJson);
+  const prior = previousHints
+    .map((h) => h.trim())
+    .filter(Boolean)
+    .slice(0, MAX_HINTS_PER_QUESTION);
+  if (prior.length >= MAX_HINTS_PER_QUESTION) {
+    throw new PlanDomainError(
+      "HINT_LIMIT",
+      `Hint limit reached (${MAX_HINTS_PER_QUESTION} per question). Try again or use Learn more.`,
+      409,
+    );
+  }
   try {
     const hintOut = await generateQuizHint({
       prompt: current.prompt,
       choices: [...choices],
       correctChoiceText: choices[current.correctIndex] ?? "",
       extractedText: lesson.pdfAsset?.extractedText ?? "",
+      previousHints: prior,
     });
     const last = incorrect.at(-1);
     if (last) {
@@ -593,6 +609,9 @@ export async function requestQuizHint(lessonId: string) {
       hint: hintOut.hint,
     };
   } catch (error) {
+    if (error instanceof PlanDomainError) {
+      throw error;
+    }
     throw new PlanDomainError(
       "LLM_FAILED",
       error instanceof Error ? error.message : "Hint generation failed.",

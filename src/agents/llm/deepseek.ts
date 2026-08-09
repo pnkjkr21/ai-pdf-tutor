@@ -20,7 +20,11 @@ import {
   buildHintUserPrompt,
   truncatePdfTextForHint,
 } from "@/agents/prompts/hint";
-import { hintLlmSchema, type HintLlmOutput } from "@/agents/schemas/hint";
+import {
+  hintLlmSchema,
+  MAX_HINTS_PER_QUESTION,
+  type HintLlmOutput,
+} from "@/agents/schemas/hint";
 import {
   learnMoreLlmSchema,
   type LearnMoreLlmOutput,
@@ -75,28 +79,85 @@ async function withJsonRetry<T>(
   }
 }
 
+export type GenerateLessonPlanOptions = {
+  /** When set (regenerate), model revises this plan instead of starting cold. */
+  previousPlan?: {
+    title: string;
+    difficulty: string;
+    summary: string | null;
+    objectives: string[];
+  };
+};
+
+/**
+ * True when the new plan is mostly a paraphrase of the previous one.
+ * Compares title + each objective against prior objectives.
+ */
+function lessonPlanTooSimilar(
+  next: LessonPlanLlmOutput,
+  previous: NonNullable<GenerateLessonPlanOptions["previousPlan"]>,
+): boolean {
+  const titleSimilar = hintTooSimilar(next.title, previous.title, 0.5);
+  let similarObjectives = 0;
+  for (const objective of next.objectives) {
+    if (
+      previous.objectives.some((prev) => hintTooSimilar(objective, prev, 0.55))
+    ) {
+      similarObjectives += 1;
+    }
+  }
+  const majoritySimilar =
+    similarObjectives >= Math.ceil(next.objectives.length * 0.6);
+  const sameCount = next.objectives.length === previous.objectives.length;
+  return majoritySimilar && (titleSimilar || sameCount);
+}
+
 /**
  * Generate a Zod-validated lesson plan from PDF text via DeepSeek.
+ * Optional previousPlan enables revise-from-prior regenerate.
  */
 export async function generateLessonPlanFromPdfText(
   extractedText: string,
+  options?: GenerateLessonPlanOptions,
 ): Promise<LessonPlanLlmOutput> {
   const { text, truncated, maxChars } = truncatePdfTextForPlan(extractedText);
   if (!text) {
     throw new Error("PDF extracted text is empty.");
   }
 
-  const model = createDeepSeekChat(0.2);
+  const previousPlan = options?.previousPlan;
+  const isRevision = Boolean(previousPlan);
+  const model = createDeepSeekChat(isRevision ? 0.55 : 0.2);
 
-  return withJsonRetry("DeepSeek lesson plan", async () => {
+  async function invokeOnce(extraInstruction?: string): Promise<LessonPlanLlmOutput> {
+    const userPrompt = buildLessonPlanUserPrompt({
+      pdfText: text,
+      truncated,
+      maxChars,
+      previousPlan,
+    });
     const response = await model.invoke([
-      new SystemMessage(buildLessonPlanSystemPrompt()),
+      new SystemMessage(buildLessonPlanSystemPrompt(isRevision)),
       new HumanMessage(
-        buildLessonPlanUserPrompt({ pdfText: text, truncated, maxChars }),
+        extraInstruction ? `${userPrompt}\n\n${extraInstruction}` : userPrompt,
       ),
     ]);
     const parsed = extractJsonObject(messageContentToString(response.content));
     return lessonPlanLlmSchema.parse(parsed);
+  }
+
+  return withJsonRetry("DeepSeek lesson plan", async () => {
+    let candidate = await invokeOnce();
+    if (previousPlan && lessonPlanTooSimilar(candidate, previousPlan)) {
+      candidate = await invokeOnce(
+        [
+          "Your last draft was too similar to the previous plan.",
+          "Rewrite with a clearly different title, summary, and objective set.",
+          "Change focus and wording — do not paraphrase the prior objectives.",
+        ].join(" "),
+      );
+    }
+    return candidate;
   });
 }
 
@@ -147,10 +208,44 @@ export type HintGenerationContext = {
   choices: string[];
   correctChoiceText: string;
   extractedText: string;
+  /** Prior hints for this question; follow-ups must use a different angle. */
+  previousHints?: string[];
 };
+
+function tokenizeForSimilarity(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2),
+  );
+}
+
+/** Rough Jaccard overlap — used to reject near-paraphrase follow-up hints. */
+export function hintTooSimilar(a: string, b: string, threshold = 0.55): boolean {
+  const wa = tokenizeForSimilarity(a);
+  const wb = tokenizeForSimilarity(b);
+  if (wa.size === 0 || wb.size === 0) {
+    return false;
+  }
+  let intersection = 0;
+  for (const w of wa) {
+    if (wb.has(w)) {
+      intersection += 1;
+    }
+  }
+  const union = wa.size + wb.size - intersection;
+  return union > 0 && intersection / union >= threshold;
+}
+
+function resemblesPreviousHint(hint: string, previousHints: string[]): boolean {
+  return previousHints.some((prev) => hintTooSimilar(hint, prev));
+}
 
 /**
  * Generate a Zod-validated hint that must not reveal the correct answer.
+ * When previousHints are provided, asks for a new angle and retries once if too similar.
  */
 export async function generateQuizHint(
   context: HintGenerationContext,
@@ -162,23 +257,43 @@ export async function generateQuizHint(
     throw new Error("PDF extracted text is empty.");
   }
 
-  const model = createDeepSeekChat(0.4);
+  const previousHints = (context.previousHints ?? [])
+    .map((h) => h.trim())
+    .filter(Boolean)
+    .slice(0, MAX_HINTS_PER_QUESTION);
 
-  const output = await withJsonRetry("DeepSeek quiz hint", async () => {
+  const model = createDeepSeekChat(previousHints.length > 0 ? 0.55 : 0.4);
+
+  async function invokeOnce(extraInstruction?: string): Promise<HintLlmOutput> {
+    const userPrompt = buildHintUserPrompt({
+      prompt: context.prompt,
+      choices: context.choices,
+      pdfText: text,
+      truncated,
+      maxChars,
+      previousHints,
+    });
     const response = await model.invoke([
       new SystemMessage(buildHintSystemPrompt()),
       new HumanMessage(
-        buildHintUserPrompt({
-          prompt: context.prompt,
-          choices: context.choices,
-          pdfText: text,
-          truncated,
-          maxChars,
-        }),
+        extraInstruction ? `${userPrompt}\n\n${extraInstruction}` : userPrompt,
       ),
     ]);
     const parsed = extractJsonObject(messageContentToString(response.content));
     return hintLlmSchema.parse(parsed);
+  }
+
+  const output = await withJsonRetry("DeepSeek quiz hint", async () => {
+    let candidate = await invokeOnce();
+    if (
+      previousHints.length > 0 &&
+      resemblesPreviousHint(candidate.hint, previousHints)
+    ) {
+      candidate = await invokeOnce(
+        "Your last draft was too similar to a previous hint. Write a clearly different angle now.",
+      );
+    }
+    return candidate;
   });
 
   assertDoesNotContainCorrectChoice(
@@ -200,6 +315,7 @@ export type LearnMoreGenerationContext = {
 
 /**
  * Short PDF-grounded mini-lesson that must not reveal the MCQ answer.
+ * Correct choice is sent as a forbidden phrase for the model to avoid.
  */
 export async function generateQuizLearnMore(
   context: LearnMoreGenerationContext,
@@ -212,36 +328,56 @@ export async function generateQuizLearnMore(
   }
 
   const model = createDeepSeekChat(0.35);
+  const forbiddenPhrase = context.correctChoiceText.trim();
 
-  const output = await withJsonRetry("DeepSeek learn-more", async () => {
+  async function invokeOnce(extraInstruction?: string): Promise<LearnMoreLlmOutput> {
+    const userPrompt = buildLearnMoreUserPrompt({
+      prompt: context.prompt,
+      choices: context.choices,
+      forbiddenPhrase,
+      objectiveStatement: context.objectiveStatement,
+      pdfText: text,
+      truncated,
+      maxChars,
+    });
     const response = await model.invoke([
       new SystemMessage(buildLearnMoreSystemPrompt()),
       new HumanMessage(
-        buildLearnMoreUserPrompt({
-          prompt: context.prompt,
-          choices: context.choices,
-          objectiveStatement: context.objectiveStatement,
-          pdfText: text,
-          truncated,
-          maxChars,
-        }),
+        extraInstruction ? `${userPrompt}\n\n${extraInstruction}` : userPrompt,
       ),
     ]);
     const parsed = extractJsonObject(messageContentToString(response.content));
-    return learnMoreLlmSchema.parse(parsed);
+    const output = learnMoreLlmSchema.parse(parsed);
+    const combined = [output.topicSummary, ...(output.keyIdeas ?? [])].join(
+      "\n",
+    );
+    // Enforce: no explicit giveaway. Verbatim topic words may still appear when
+    // teaching; forbidden phrase in the prompt steers the model away from pasting the choice.
+    assertDoesNotContainCorrectChoice(
+      combined,
+      context.correctChoiceText,
+      "Learn more",
+      "giveaway",
+    );
+    return output;
+  }
+
+  return withJsonRetry("DeepSeek learn-more", async () => {
+    try {
+      return await invokeOnce();
+    } catch (firstError) {
+      if (
+        firstError instanceof Error &&
+        /rejected/i.test(firstError.message) &&
+        forbiddenPhrase
+      ) {
+        return invokeOnce(
+          `Your previous draft spoiled the answer. Rewrite with ZERO use of this forbidden phrase: "${forbiddenPhrase}". Do not say which choice is correct.`,
+        );
+      }
+      throw firstError;
+    }
   });
-
-  const combined = [
-    output.topicSummary,
-    ...(output.keyIdeas ?? []),
-  ].join("\n");
-  assertDoesNotContainCorrectChoice(
-    combined,
-    context.correctChoiceText,
-    "Learn more",
-  );
-
-  return output;
 }
 
 export type StudyTipsGenerationContext = {

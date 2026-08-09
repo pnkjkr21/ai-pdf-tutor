@@ -24,7 +24,9 @@ export function buildLearnMoreSystemPrompt(): string {
     "Hard rules:",
     "- Use ONLY the provided PDF text. Do not invent outside facts.",
     "- Do NOT say which choice is correct (no A/B/C/D, no “the answer is”).",
-    "- Do NOT quote or paraphrase any answer choice as the solution.",
+    "- A FORBIDDEN PHRASE is provided (the correct choice text). Never write that exact phrase in topicSummary or keyIdeas.",
+    "- Do not paraphrase the forbidden phrase so closely that it is obviously the MCQ answer.",
+    "- Teach around the idea using different wording; leave the student to match the concept to a choice.",
     "- Keep the explanation helpful but incomplete enough that the MCQ remains a real test.",
     "- Be socratic/explanatory, not a spoiler.",
     'Respond with JSON only: { "topicSummary": string, "keyIdeas": string[] }',
@@ -35,6 +37,8 @@ export function buildLearnMoreSystemPrompt(): string {
 export function buildLearnMoreUserPrompt(params: {
   prompt: string;
   choices: string[];
+  /** Exact correct choice text — must not appear in the model output. */
+  forbiddenPhrase: string;
   objectiveStatement?: string | null;
   pdfText: string;
   truncated: boolean;
@@ -52,12 +56,19 @@ export function buildLearnMoreUserPrompt(params: {
     ? `\nRelated learning objective: ${params.objectiveStatement}\n`
     : "";
 
+  const forbidden = params.forbiddenPhrase.trim();
+
   return [
     "The student wants to learn more about the topic behind this question.",
     objective,
     `Question: ${params.prompt}`,
-    "Choices (for context only — never identify which is correct):",
+    "Choices (for your awareness only — never identify which is correct):",
     choices,
+    "",
+    "--- FORBIDDEN PHRASE (correct choice — do NOT write this exact text anywhere in your JSON) ---",
+    forbidden || "(none)",
+    "--- END FORBIDDEN PHRASE ---",
+    "If you need the concept, explain it with different words. Never paste or lightly rephrase the forbidden phrase.",
     note,
     "",
     "--- PDF TEXT ---",

@@ -106,7 +106,8 @@ export async function generatePlanForLesson(
 }
 
 /**
- * Replace pending plan with a new DeepSeek proposal. Keeps old plan if LLM fails.
+ * Replace pending plan with a DeepSeek revision of the current pending plan.
+ * Passes the saved plan as context. Keeps old plan if LLM fails.
  */
 export async function regeneratePlanForLesson(
   lessonId: string,
@@ -121,11 +122,29 @@ export async function regeneratePlanForLesson(
     );
   }
 
+  if (!lesson.plan || lesson.objectives.length === 0) {
+    throw new PlanDomainError(
+      "NO_PLAN",
+      "No pending plan to revise. Generate a plan first.",
+      409,
+    );
+  }
+
   const extractedText = requireExtractedText(lesson);
+  const previousPlan = {
+    title: lesson.plan.title,
+    difficulty: lesson.plan.difficulty,
+    summary: lesson.plan.summary,
+    objectives: [...lesson.objectives]
+      .sort((a, b) => a.orderIndex - b.orderIndex)
+      .map((o) => o.statement),
+  };
 
   let llmPlan;
   try {
-    llmPlan = await generateLessonPlanFromPdfText(extractedText);
+    llmPlan = await generateLessonPlanFromPdfText(extractedText, {
+      previousPlan,
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "DeepSeek plan regeneration failed.";

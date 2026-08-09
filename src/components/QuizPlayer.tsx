@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 
 import { CompletionReport } from "@/components/CompletionReport";
 import { QuizReview, type ReviewedQuestion } from "@/components/QuizReview";
+import { MAX_HINTS_PER_QUESTION } from "@/agents/schemas/hint";
 
 type SafeQuestion = {
   id: string;
@@ -32,7 +33,8 @@ type QuizState = {
   question: SafeQuestion | null;
   selectedIndex: number | null;
   explanation: string | null;
-  hint: string | null;
+  /** Ordered hints for the current incorrect question (newest last). */
+  hints: string[];
   learnMore: {
     topicSummary: string;
     keyIdeas: string[];
@@ -47,9 +49,18 @@ const emptyState: QuizState = {
   question: null,
   selectedIndex: null,
   explanation: null,
-  hint: null,
+  hints: [],
   learnMore: null,
   progress: null,
+};
+
+type PendingAction = "submit" | "hint" | "learn-more" | "next";
+
+const PENDING_LABEL: Record<PendingAction, string> = {
+  submit: "Submitting…",
+  hint: "Getting hint…",
+  "learn-more": "Loading lesson…",
+  next: "Loading…",
 };
 
 export function QuizPlayer({
@@ -65,7 +76,10 @@ export function QuizPlayer({
   const [history, setHistory] = useState<ReviewedQuestion[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [reviewIndex, setReviewIndex] = useState<number | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
+  const [, startTransition] = useTransition();
 
   async function loadCurrent() {
     setError(null);
@@ -80,7 +94,7 @@ export function QuizPlayer({
       question: json.question,
       selectedIndex: json.selectedIndex,
       explanation: json.explanation,
-      hint: null,
+      hints: [],
       learnMore: null,
       progress: json.progress,
       message: json.message,
@@ -114,14 +128,22 @@ export function QuizPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId]);
 
-  function run(action: () => Promise<void>) {
-    startTransition(async () => {
-      setError(null);
-      try {
-        await action();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Request failed");
-      }
+  function run(action: PendingAction, work: () => Promise<void>) {
+    if (pendingAction) {
+      return;
+    }
+    startTransition(() => {
+      void (async () => {
+        setPendingAction(action);
+        setError(null);
+        try {
+          await work();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Request failed");
+        } finally {
+          setPendingAction(null);
+        }
+      })();
     });
   }
 
@@ -129,6 +151,8 @@ export function QuizPlayer({
   const locked = state.phase === "correct" || state.phase === "finished";
   const isReviewing = reviewIndex !== null && history.length > 0;
   const showRadios = !isReviewing && state.phase !== "finished" && question;
+  const hintsAtLimit = state.hints.length >= MAX_HINTS_PER_QUESTION;
+  const busy = pendingAction !== null;
 
   return (
     <section className="flex w-full flex-col gap-4 rounded-md border border-stone-200 bg-white px-4 py-4">
@@ -202,7 +226,7 @@ export function QuizPlayer({
       ) : null}
 
       {showRadios ? (
-        <fieldset className="flex flex-col gap-3" disabled={isPending || locked}>
+        <fieldset className="flex flex-col gap-3" disabled={busy || locked}>
           <legend className="text-base font-medium text-stone-900">
             {question.prompt}
           </legend>
@@ -224,7 +248,7 @@ export function QuizPlayer({
                 <label
                   key={`${question.id}-${index}`}
                   className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 text-sm text-stone-800 ${style} ${
-                    locked ? "cursor-default" : ""
+                    locked || busy ? "cursor-default" : ""
                   }`}
                 >
                   <input
@@ -232,7 +256,7 @@ export function QuizPlayer({
                     name={`q-${question.id}`}
                     value={index}
                     checked={selected}
-                    disabled={locked || isPending}
+                    disabled={locked || busy}
                     onChange={() => setDraftIndex(index)}
                     className="mt-1"
                   />
@@ -244,11 +268,26 @@ export function QuizPlayer({
         </fieldset>
       ) : null}
 
-      {!isReviewing && state.phase === "incorrect" && state.hint ? (
-        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-          <span className="font-medium">Hint: </span>
-          {state.hint}
-        </p>
+      {!isReviewing && state.phase === "incorrect" && state.hints.length > 0 ? (
+        <div className="flex flex-col gap-2">
+          {state.hints.map((hint, index) => (
+            <p
+              key={`hint-${index}-${hint.slice(0, 24)}`}
+              className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+            >
+              <span className="font-medium">
+                {state.hints.length === 1 ? "Hint: " : `Hint ${index + 1}: `}
+              </span>
+              {hint}
+            </p>
+          ))}
+          {hintsAtLimit ? (
+            <p className="text-xs text-stone-500">
+              Hint limit reached ({MAX_HINTS_PER_QUESTION}). Use Retry or Learn
+              more.
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {!isReviewing && state.phase === "correct" && state.explanation ? (
@@ -258,13 +297,16 @@ export function QuizPlayer({
         </p>
       ) : null}
 
-      <div className={`flex-wrap gap-2 ${isReviewing ? "hidden" : "flex"}`}>
+      <div
+        className={`flex-wrap gap-2 ${isReviewing ? "hidden" : "flex"}`}
+        aria-busy={busy}
+      >
         {state.phase === "unanswered" || state.phase === "incorrect" ? (
           <button
             type="button"
-            disabled={isPending || draftIndex === null}
+            disabled={busy || draftIndex === null}
             onClick={() =>
-              run(async () => {
+              run("submit", async () => {
                 if (!question || draftIndex === null) return;
                 const res = await fetch(
                   `/api/lessons/${lessonId}/quiz/answer`,
@@ -291,7 +333,7 @@ export function QuizPlayer({
                   question: json.question,
                   selectedIndex: json.selectedIndex,
                   explanation: json.explanation,
-                  hint: json.hint ?? null,
+                  hints: json.hint ? [json.hint] : [],
                   learnMore: null,
                   progress: json.progress,
                 });
@@ -302,7 +344,7 @@ export function QuizPlayer({
             }
             className="disabled:cursor-not-allowed rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700 hover:cursor-pointer"
           >
-            {isPending ? "Submitting…" : "Submit"}
+            {pendingAction === "submit" ? PENDING_LABEL.submit : "Submit"}
           </button>
         ) : null}
 
@@ -310,8 +352,9 @@ export function QuizPlayer({
           <>
             <button
               type="button"
-              disabled={isPending}
+              disabled={busy}
               onClick={() => {
+                if (busy) return;
                 setDraftIndex(null);
                 setState((s) => ({
                   ...s,
@@ -319,18 +362,34 @@ export function QuizPlayer({
                   selectedIndex: null,
                 }));
               }}
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800"
+              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Retry
             </button>
             <button
               type="button"
-              disabled={isPending}
+              disabled={busy || hintsAtLimit}
+              title={
+                hintsAtLimit
+                  ? `Hint limit reached (${MAX_HINTS_PER_QUESTION} per question)`
+                  : undefined
+              }
               onClick={() =>
-                run(async () => {
+                run("hint", async () => {
+                  if (state.hints.length >= MAX_HINTS_PER_QUESTION) {
+                    return;
+                  }
+                  const previousHints = state.hints.slice(
+                    0,
+                    MAX_HINTS_PER_QUESTION,
+                  );
                   const res = await fetch(
                     `/api/lessons/${lessonId}/quiz/hint`,
-                    { method: "POST" },
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ previousHints }),
+                    },
                   );
                   const json = (await res.json()) as {
                     hint?: string;
@@ -339,18 +398,34 @@ export function QuizPlayer({
                   if (!res.ok) {
                     throw new Error(json.error ?? "Hint failed");
                   }
-                  setState((s) => ({ ...s, hint: json.hint ?? s.hint }));
+                  const next = json.hint?.trim();
+                  if (!next) {
+                    return;
+                  }
+                  setState((s) => {
+                    if (
+                      s.hints.length >= MAX_HINTS_PER_QUESTION ||
+                      s.hints.includes(next)
+                    ) {
+                      return s;
+                    }
+                    return { ...s, hints: [...s.hints, next] };
+                  });
                 })
               }
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800"
+              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Another hint
+              {pendingAction === "hint"
+                ? PENDING_LABEL.hint
+                : hintsAtLimit
+                  ? `Hint limit (${MAX_HINTS_PER_QUESTION})`
+                  : "Another hint"}
             </button>
             <button
               type="button"
-              disabled={isPending}
+              disabled={busy}
               onClick={() =>
-                run(async () => {
+                run("learn-more", async () => {
                   const res = await fetch(
                     `/api/lessons/${lessonId}/quiz/learn-more`,
                     { method: "POST" },
@@ -376,9 +451,11 @@ export function QuizPlayer({
                   }));
                 })
               }
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800"
+              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Learn more
+              {pendingAction === "learn-more"
+                ? PENDING_LABEL["learn-more"]
+                : "Learn more"}
             </button>
           </>
         ) : null}
@@ -386,9 +463,9 @@ export function QuizPlayer({
         {state.phase === "correct" ? (
           <button
             type="button"
-            disabled={isPending}
+            disabled={busy}
             onClick={() =>
-              run(async () => {
+              run("next", async () => {
                 const res = await fetch(
                   `/api/lessons/${lessonId}/quiz/next`,
                   { method: "POST" },
@@ -405,7 +482,7 @@ export function QuizPlayer({
                   question: json.question,
                   selectedIndex: json.selectedIndex,
                   explanation: json.explanation,
-                  hint: null,
+                  hints: [],
                   learnMore: null,
                   progress: json.progress,
                   message: json.message,
@@ -417,12 +494,21 @@ export function QuizPlayer({
                 await onStatusChange?.();
               })
             }
-            className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 hover:bg-teal-700"
+            className="rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 hover:bg-teal-700"
           >
-            {isPending ? "Loading…" : "Next"}
+            {pendingAction === "next" ? PENDING_LABEL.next : "Next"}
           </button>
         ) : null}
       </div>
+
+      {!isReviewing && pendingAction === "learn-more" && !state.learnMore ? (
+        <p
+          className="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-950"
+          aria-live="polite"
+        >
+          Loading a short lesson from the PDF…
+        </p>
+      ) : null}
 
       {!isReviewing && state.learnMore ? (
         <aside className="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-950">
@@ -438,8 +524,9 @@ export function QuizPlayer({
           <p className="mt-3 text-sky-900/90">{state.learnMore.guideBack}</p>
           <button
             type="button"
-            disabled={isPending}
+            disabled={busy}
             onClick={() => {
+              if (busy) return;
               setDraftIndex(null);
               setState((s) => ({
                 ...s,
@@ -447,7 +534,7 @@ export function QuizPlayer({
                 selectedIndex: null,
               }));
             }}
-            className="mt-3 rounded-md bg-teal-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700"
+            className="mt-3 rounded-md bg-teal-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Back to question
           </button>

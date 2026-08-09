@@ -341,7 +341,9 @@ export function LessonPlanPanel({ lessonId }: { lessonId: string }) {
                     throw new Error(json.error ?? "Regenerate failed");
                   }
                   applyPayload(json);
-                  setInfo("New plan generated from the PDF. Still pending approval.");
+                  setInfo(
+                    "Plan revised from your previous draft (and the PDF). Still pending approval. Save edits first if you want unsaved changes included next time.",
+                  );
                 })
               }
               className="hover:cursor-pointer disabled:cursor-not-allowed rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-50"
