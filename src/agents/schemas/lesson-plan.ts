@@ -68,7 +68,7 @@ export type LessonPlanResponse = z.infer<typeof lessonPlanResponseSchema>;
 export const planRegenerateGoalSchema = z.enum([
   "easier",
   "more_challenging",
-  "deeper_coverage",
+  "focused",
 ]);
 
 export type PlanRegenerateGoal = z.infer<typeof planRegenerateGoalSchema>;
@@ -87,21 +87,21 @@ export const PLAN_REGENERATE_GOALS: Array<{
 }> = [
   {
     id: "easier",
-    label: "Make it easier",
+    label: "Make it easier: Simpler, foundational path ",
     instruction:
       "Make the plan easier: prefer BEGINNER or lower complexity, simpler vocabulary, foundational objectives, and fewer advanced applications.",
   },
   {
     id: "more_challenging",
-    label: "Make it more challenging",
+    label: "Make it more challenging: More analysis & application",
     instruction:
       "Make the plan more challenging: prefer INTERMEDIATE/ADVANCED where the PDF supports it, deeper analysis, synthesis, and application-heavy objectives.",
   },
   {
-    id: "deeper_coverage",
-    label: "Cover the PDF more deeply",
+    id: "focused",
+    label: "Focus on key concepts: Shorter, high-value path",
     instruction:
-      "Cover the PDF more deeply: expand to more objectives (up to 6) that span important sections/themes in the PDF, with specific, text-grounded outcomes.",
+      "Create a more focused learning plan using only the most important concepts needed to understand the PDF. Merge secondary or overlapping objectives and prioritize high-value learning outcomes while remaining grounded in the source.",
   },
 ];
 

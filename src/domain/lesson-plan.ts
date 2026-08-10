@@ -139,7 +139,7 @@ export async function regeneratePlanForLesson(
   } catch {
     throw new PlanDomainError(
       "INVALID_BODY",
-      "Choose a regenerate goal: easier, more_challenging, or deeper_coverage.",
+      "Choose a regenerate goal: easier, more_challenging, or focused.",
       400,
     );
   }

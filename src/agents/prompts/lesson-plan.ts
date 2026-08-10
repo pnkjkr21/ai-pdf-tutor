@@ -46,7 +46,7 @@ export function buildLessonPlanSystemPrompt(isRevision = false): string {
     "Respond with a single JSON object only (no markdown fences) matching this shape:",
     '{ "title": string, "difficulty": "BEGINNER"|"INTERMEDIATE"|"ADVANCED", "summary": string|null, "objectives": string[] }',
     "Provide 3 to 6 clear, specific learning objectives (ordered from foundational to advanced).",
-    "Keep the title concise. Summary should be 1–3 sentences or null.",
+    "Keep the title concise. Summary should be 1-3 sentences or null.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -86,11 +86,11 @@ export function buildLessonPlanUserPrompt(params: {
     "Hard requirements:",
     "- Do NOT copy or lightly rephrase the previous title, summary, or objectives.",
     "- Rewrite every objective with substantially different wording and a shifted focus (skill, concept, or application).",
-    "- Prefer a different objective count when the PDF supports it (still 3–6), or a different sequence of skills.",
+    "- Prefer a different objective count when the PDF supports it (still 3-6), or a different sequence of skills.",
     "- Title and summary must also change meaningfully.",
     "- Stay grounded only in the PDF text below.",
     "Treat the previous plan as a draft to improve and diverge from — not a template to echo.",
-    "Still return the required JSON shape with 3–6 objectives.",
+    "Still return the required JSON shape with 3-6 objectives.",
     ...goalBlock,
     note,
     "",
